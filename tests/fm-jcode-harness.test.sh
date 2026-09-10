@@ -188,6 +188,87 @@ pass "teardown stops the jcode bridge"
 
 
 
+
+# ------------------------------------------------ jcode as a PRIMARY harness
+# A primary is not spawned by fm-spawn: the captain types it in the pane. What
+# it needs is a verified supervision protocol, or it falls back to the generic
+# unknown contract and a bounded foreground wait instead of a background arm.
+
+SUPI="$ROOT/bin/fm-supervision-instructions.sh"
+[ -x "$SUPI" ] || fail "fm-supervision-instructions.sh must be executable"
+
+JC_SNIPPET="$ROOT/docs/supervision-protocols/jcode.md"
+[ -f "$JC_SNIPPET" ] || fail "jcode needs its own supervision protocol snippet"
+pass "jcode has a supervision protocol snippet"
+
+JC_RENDER=$("$SUPI" --harness jcode 2>&1)
+case "$JC_RENDER" in
+  *"Mode: jcode background-notify supervision."*) ;;
+  *) fail "jcode must render its OWN supervision mode, not the unknown fallback" ;;
+esac
+case "$JC_RENDER" in
+  *"Unknown harness fallback"*)
+    fail "jcode must not fall through to the unknown harness contract" ;;
+esac
+pass "jcode renders its own supervision mode rather than the unknown fallback"
+
+# wake: true is the whole protocol. Verified on v0.84.0 that jcode's wake field
+# carries no default and a prose instruction produced wake=false with no wake
+# ever firing, so the snippet must prescribe it literally.
+case "$JC_RENDER" in
+  *"run_in_background: true"*) ;;
+  *) fail "the jcode arm must prescribe run_in_background: true" ;;
+esac
+case "$JC_RENDER" in
+  *"wake: true"*) ;;
+  *) fail "the jcode arm must prescribe wake: true explicitly" ;;
+esac
+case "$JC_RENDER" in
+  *"LOAD-BEARING"*) ;;
+  *) fail "the snippet must state why wake: true cannot be omitted" ;;
+esac
+pass "the jcode arm prescribes run_in_background and an explicit wake: true"
+
+case "$JC_RENDER" in
+  *"bin/fm-watch-arm.sh"*) ;;
+  *) fail "jcode must arm the background watcher, not a foreground wait" ;;
+esac
+case "$JC_RENDER" in
+  *"Never use shell \`&\`"*) ;;
+  *) fail "the jcode protocol must forbid shell & for supervision" ;;
+esac
+pass "jcode arms bin/fm-watch-arm.sh as a tracked background task, never shell &"
+
+JC_REPAIR=$("$SUPI" --harness jcode --repair-line 2>&1)
+case "$JC_REPAIR" in
+  *jcode*wake:\ true*) ;;
+  *) fail "the jcode repair line must name the wake: true requirement: $JC_REPAIR" ;;
+esac
+pass "the jcode repair line names the wake: true requirement"
+
+case "$JC_RENDER" in
+  *"Ordinary wake: re-arm exactly one bin/fm-watch-arm.sh jcode background bash task"*) ;;
+  *) fail "jcode needs its own ordinary-wake line; the generic one arms nothing" ;;
+esac
+pass "jcode has its own ordinary-wake line"
+
+# Registering jcode must not have disturbed any other primary.
+for h in claude codex opencode pi grok cursor omp; do
+  m=$("$SUPI" --harness "$h" 2>&1 | grep -m1 '^Mode:')
+  case "$m" in
+    *"Unknown harness fallback"*) fail "$h lost its supervision snippet" ;;
+    "") fail "$h rendered no supervision mode" ;;
+  esac
+done
+for h in muse rovo gemini bogus; do
+  m=$("$SUPI" --harness "$h" 2>&1 | grep -m1 '^Mode:')
+  case "$m" in
+    *"Unknown harness fallback"*) ;;
+    *) fail "$h must still fall back to the unknown contract, got: $m" ;;
+  esac
+done
+pass "every other harness keeps its own protocol, and unverified ones still fall back"
+
 # ------------------------------------------------- firstmate owns dispatch
 # jcode can spawn and coordinate its OWN swarm workers, queue future runs
 # (schedule / initiative), and run unattended (ambient). Every one of those
