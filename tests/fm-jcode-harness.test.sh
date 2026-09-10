@@ -108,11 +108,11 @@ fi
 pass "jcode composer guard matches only in-flight rows, and only for jcode"
 
 # --------------------------------------------------------- quota and detection
-grep -qE "^[[:space:]]+jcode\)[[:space:]]+printf 'claude" "$ROOT/bin/fm-quota-choose.sh" \
+grep -qE "^[[:space:]]+jcode\)[[:space:]]+printf 'claude" "$ROOT/bin/fm-quota-axi-lib.sh" \
   || fail "jcode must share the claude quota family: it spends the same subscription windows"
 pass "jcode shares the claude quota family"
 
-grep -qE '^[[:space:]]+jcode\) echo jcode; return ;;' "$ROOT/bin/fm-harness.sh" \
+grep -qE '^[[:space:]]+jcode\) echo "comm jcode"; return ;;' "$ROOT/bin/fm-harness.sh" \
   || fail "bin/fm-harness.sh must detect an anchored jcode process name"
 pass "jcode is detected by its own anchored process name"
 
