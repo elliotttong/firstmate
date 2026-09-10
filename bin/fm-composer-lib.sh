@@ -413,6 +413,15 @@ FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
 # agy-regex fold in bin/fm-busy-lib.sh.
 FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT='esc[[:space:]]+to[[:space:]]+cancel'
 FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
+# jcode renders a braille spinner glyph at the head of its in-flight status row
+# (`⠼ 1s · ↑38 ↓200 · https`, `⠸ sending context… 9s`) and DROPS the glyph the
+# instant the turn ends, leaving a bare summary row (`  6.2s · 107.4 tps · ↑91 ↓36`).
+# The glyph is therefore the whole discriminator; the trailing seconds/`sending`
+# alternation keeps an unrelated braille glyph elsewhere on screen from matching.
+# Verified live 2026-09-09 on v0.84.0 against 4 in-flight and 5 settled rows.
+# DELIVERY guard only - jcode's recorded worker state comes from the daemon
+# session fold in bin/fm-busy-lib.sh (jcode-debug), never from this row.
+FM_DELIVERY_JCODE_BUSY_REGEX_DEFAULT='^[[:space:]]*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏][[:space:]]+([0-9]+(\.[0-9]+)?s|sending)'
 
 fm_busy_lines_match() {  # [harness]
   local harness=${1:-} lines regex
@@ -429,6 +438,7 @@ fm_busy_lines_match() {  # [harness]
       grok) regex=$FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT ;;
       agy) regex=$FM_DELIVERY_AGY_BUSY_REGEX_DEFAULT ;;
       kimi) regex=$FM_DELIVERY_KIMI_BUSY_REGEX_DEFAULT ;;
+      jcode) regex=$FM_DELIVERY_JCODE_BUSY_REGEX_DEFAULT ;;
       cursor) regex=$FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT ;;
       '') regex=$FM_DELIVERY_BUSY_REGEX_DEFAULT ;;
       *)
