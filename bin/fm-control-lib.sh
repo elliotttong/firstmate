@@ -63,7 +63,7 @@ fm_control_verb_allowed() {  # <verb>
 # section 4's verified-adapter list; an unverified adapter is refused rather
 # than guessed at, exactly as a spawn on it would be.
 fm_control_harnesses() {
-  printf '%s\n' claude codex opencode pi pi-signed grok kimi cursor gemini muse rovo omp agy devin
+  printf '%s\n' claude codex opencode pi pi-signed grok kimi cursor gemini muse rovo omp agy devin jcode
 }
 
 fm_control_harness_supported() {  # <harness>
@@ -90,6 +90,7 @@ fm_control_harness_family() {  # <recorded-harness>
     omp) printf 'omp' ;;
     agy) printf 'agy' ;;
     devin) printf 'devin' ;;
+    jcode) printf 'jcode' ;;
     claude*) printf 'claude' ;;
     codex*) printf 'codex' ;;
     opencode*) printf 'opencode' ;;
@@ -131,7 +132,7 @@ fm_control_harness_supports_kind() {  # <harness> <kind>
 fm_control_interrupt_key() {  # <harness>
   case "${1-}" in
     claude|codex|opencode|pi|pi-signed|omp|kimi|cursor|gemini|muse|rovo|agy|devin) printf 'Escape' ;;
-    grok) printf 'C-c' ;;
+    grok|jcode) printf 'C-c' ;;
     *) return 1 ;;
   esac
 }
@@ -141,7 +142,7 @@ fm_control_interrupt_key() {  # <harness>
 fm_control_interrupt_repeat() {  # <harness>
   case "${1-}" in
     opencode|devin) printf '2' ;;
-    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy) printf '1' ;;
+    claude|codex|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy|jcode) printf '1' ;;
     *) return 1 ;;
   esac
 }
@@ -205,7 +206,7 @@ fm_control_interrupt_hazard_signal() {  # <harness>
 fm_control_interrupt_clear_key() {  # <harness>
   case "${1-}" in
     muse) printf 'C-u' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin) ;;
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin|jcode) ;;
     *) return 1 ;;
   esac
 }
@@ -220,7 +221,7 @@ fm_control_interrupt_ack_source() {  # <harness>
     # rovo's TUI prints "Agent cancelled" on Escape, but for parity with
     # claude/cursor this stays 'none': the ack is a rendered string, not a
     # recorded state source, and rovo has no busy wiring to confirm against.
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin) printf 'none' ;;
+    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy|devin|jcode) printf 'none' ;;
     *) return 1 ;;
   esac
 }
@@ -229,7 +230,7 @@ fm_control_interrupt_ack_source() {  # <harness>
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
     claude|opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
-    codex|pi|pi-signed|omp|gemini|agy|devin) printf '/quit' ;;
+    codex|pi|pi-signed|omp|gemini|agy|devin|jcode) printf '/quit' ;;
     *) return 1 ;;
   esac
 }
@@ -342,6 +343,11 @@ fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id>
     opencode) printf '%s\n' "$wt/.opencode/plugins/fm-busy-state.js" ;;
     pi|pi-signed) printf '%s\n' "$state/$id.pi-ext.ts" ;;
     omp) printf '%s\n' "$state/$id.omp-ext.ts" ;;
+    # jcode's busy wiring is a background PROCESS (bin/fm-jcode-busy-bridge.sh),
+    # not a config file the harness reads. Its pidfile is the artifact a relaunch
+    # must clear, so a superseded incarnation's bridge cannot outlive its gen and
+    # keep publishing against a task that has already been replaced.
+    jcode) printf '%s\n' "$state/$id.jcode-bridge.pid" ;;
     grok)
       printf '%s\n' "$wt/.fm-grok-turnend"
       printf '%s\n' "$state/$id.grok-turnend-token"
