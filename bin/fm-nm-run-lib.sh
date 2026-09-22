@@ -250,7 +250,25 @@ try:
         root = Path(worktree) / root
     with closing(sqlite3.connect((root / "state.sqlite").as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
         db.execute("BEGIN")
-        repo = db.execute("SELECT id FROM repos WHERE working_path = ?", (worktree,)).fetchall()
+        candidates = [worktree]
+        # A linked worktree's .git is a file pointing into the MAIN repo's
+        # .git/worktrees/<name>; the daemon registers repos by the main
+        # working path, so resolve it and try both.
+        gitfile = Path(worktree) / ".git"
+        if gitfile.is_file():
+            ref = gitfile.read_text().strip()
+            if ref.startswith("gitdir:"):
+                gitdir = Path(ref.split(":", 1)[1].strip())
+                main = gitdir
+                while main.name != ".git" and main != main.parent:
+                    main = main.parent
+                if main.name == ".git":
+                    candidates.append(str(main.parent))
+        repo = []
+        for cand in candidates:
+            repo = db.execute("SELECT id FROM repos WHERE working_path = ?", (cand,)).fetchall()
+            if len(repo) == 1:
+                break
         if len(repo) != 1:
             raise ValueError
         rows = db.execute(
