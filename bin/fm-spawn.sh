@@ -2150,15 +2150,17 @@ if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini 
   exit 1
 fi
 
+# jcode is verified as a primary (docs/supervision-protocols/jcode.md) and for
+# crewmate/scout work, but running a secondmate on it has never been verified.
+if [ "$KIND" = secondmate ] && [ "$HARNESS" = jcode ]; then
+  echo "error: jcode is verified as a primary and for crewmate/scout work, but is not verified as a secondmate, so it cannot run one. Select a harness verified for secondmates." >&2
+  exit 1
+fi
+
 # rovo carries the same primary-supervision gap as muse: no turn-end hook, no
 # verified primary integration, so a secondmate (a firstmate instance that must
 # itself act as a primary) could never be supervised. Refuse loudly rather than
 # standing one up with no way to arm its watch cycle.
-if [ "$KIND" = secondmate ] && [ "$HARNESS" = jcode ]; then
-  echo "error: jcode is a verified crewmate/scout adapter only and cannot run a secondmate; no primary supervision protocol has been verified for it. Select a harness verified for secondmates." >&2
-  exit 1
-fi
-
 if [ "$KIND" = secondmate ] && [ "$HARNESS" = rovo ]; then
   echo "error: rovo is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1

@@ -695,15 +695,15 @@ fi
 [ ! -e "$E2E_STATE/$E2E_ID.jcode-bridge.pid" ] || fail "teardown must remove the bridge pidfile"
 pass "teardown stops the jcode busy bridge process"
 
-# A secondmate must itself act as a primary, and jcode has no verified primary
-# supervision path for that role, so the spawn is refused outright.
+# jcode is verified as a primary and for crewmate/scout work, but never as a
+# secondmate, so a secondmate spawn is refused outright.
 SM_ID=jcode-secondmate-1
 e2e_case jcode-secondmate "$SM_ID"
 SM_RC=0
 SM_OUT=$(fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$SM_ID" --secondmate jcode 2>&1) || SM_RC=$?
 [ "$SM_RC" -ne 0 ] || fail "a jcode secondmate spawn must be refused"
 case "$SM_OUT" in
-  *"jcode is a verified crewmate/scout adapter only"*) ;;
+  *"jcode is verified as a primary"*"not verified as a secondmate"*) ;;
   *) fail "the jcode secondmate refusal must state its reason: $SM_OUT" ;;
 esac
 pass "fm-spawn refuses a jcode secondmate"
