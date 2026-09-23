@@ -52,6 +52,7 @@ launch so the refusal cannot be bypassed by a raw harness argument.
 | per-task wiring | `state/<id>.jcode-bridge.pid` |
 | `fm-busy-lib.sh` source | `jcode-debug` |
 | `fm-composer-lib.sh` delivery guard | `FM_DELIVERY_JCODE_BUSY_REGEX_DEFAULT` |
+| `fm-composer-lib.sh` composer shape | `fm_composer_jcode_normalize_screen` (see Composer) |
 | `fm-quota-choose.sh` family | `claude` |
 | `fm-harness.sh` detection | anchored `jcode` |
 | `fm-bootstrap.sh` effort set | `none minimal low medium high xhigh max` (swarm levels excluded) |
@@ -75,17 +76,38 @@ that do not apply elsewhere:
 
 ## Composer
 
-jcode numbers its composer prompt (`1>` empty, `1> typed`, `1<>` submitted), so
-Firstmate's leading-glyph resolvers do not anchor on it and its EMPTY composer
-classifies `pending` rather than `empty`.
+jcode numbers its composer prompt (`1>` empty, `1> typed`, `1<>` submitted) and
+draws furniture at the row's far right: a context meter and a private-use-area
+status glyph, both present on an empty composer and unchanged by typing.
 
-This is DELIBERATELY not worked around. Making the shared resolvers strip a turn
-index weakens the dead-shell rule for every harness, and it regressed
-`tests/fm-control-relaunch.test.sh` when tried. It is also unnecessary: a
-non-empty submit verdict is a delivery GUARD, not disproof - kimi already
-tolerates one - and `bin/fm-jcode-seed.sh` proves delivery from the daemon's own
-`is_processing` going true, which is strictly stronger evidence than a composer
-read. Do not "fix" the composer for jcode without a better reason than tidiness.
+Firstmate's leading-glyph resolvers cannot anchor on that shape, so a jcode
+composer classified `unknown` in every state until 2026-09-23. That is NOT
+merely untidy: `bin/fm-control.sh` refuses to type an exit command unless the
+composer is proven empty, and `fm-spawn.sh --relaunch` then refuses because the
+endpoint still reads alive, so a stalled jcode worker could not be stopped
+through the guarded path at all. Two were recoverable only by terminating the
+agent processes directly.
+
+The row is therefore normalized before classification - furniture tail first,
+then the turn index rewritten to the shared agent prompt glyph - and ONLY for a
+pane whose foreground process is structurally identified as jcode, mirroring
+the Cursor process-identity gate. The shared resolvers are untouched, so no
+other harness's dead-shell rule is weakened; an earlier attempt that made them
+strip a turn index generally is what regressed
+`tests/fm-control-relaunch.test.sh`, and that remains the wrong fix.
+
+The leading DIGITS are what make this safe. A dead shell prompt is `>`, `$`,
+`%`, or `#` alone and is never `1>`, so a numbered prompt is positive proof of
+jcode's composer, while a bare prompt on a jcode pane still reads `unknown` and
+still refuses the lifecycle action - which is correct, because that is what an
+exited agent leaves behind.
+
+Delivery is unaffected and still does not depend on this: `bin/fm-jcode-seed.sh`
+proves a brief landed from the daemon's own `is_processing`, which is stronger
+evidence than any composer read.
+
+See `docs/verification/runtime-backends.md` ("2026-09-23 jcode ... numbered
+composer prompt") for the live evidence and the refresh command.
 
 ## Firstmate owns dispatch
 
