@@ -107,6 +107,61 @@ if printf '%s\0' "$JCODE_SPIN_ROW" | fm_busy_lines_match claude; then
 fi
 pass "jcode composer guard matches only in-flight rows, and only for jcode"
 
+# ------------------------------------------- numbered composer classification
+# jcode numbers its composer prompt (`1>`, `2>`, `1<>` once submitted) and
+# draws a context meter and a status glyph at the row's far right. Left
+# unrecognized, every jcode composer reads `unknown`, and bin/fm-control.sh
+# refuses to type an exit command unless the composer is PROVEN empty - which
+# is how two stalled jcode workers became unrecoverable through the guarded
+# path on 2026-09-23. These are the shapes captured live from jcode v0.86.0.
+JC_CAPS=$(printf 'styled=1\ncursor=1\nidentity=1\nrows=0\n')
+JC_METER='3.1k/1.0M ▱▱▱▱▱▱ 0%'
+JC_GLYPH=$(printf '\xf3\xb0\x96\x9f')  # U+F059F, jcode's right-hand status glyph
+
+jc_verdict() {  # <composer-row> -> verdict
+  local screen
+  screen=$(printf 'transcript row\n%s\n' "$1" | fm_composer_jcode_normalize_screen)
+  fm_composer_classify_screen "$JC_CAPS" "$screen" 1
+}
+
+[ "$(jc_verdict "1>                                   $JC_METER")" = empty ] \
+  || fail "an EMPTY jcode composer must classify empty, or the guarded exit path can never stop a jcode agent"
+[ "$(jc_verdict "1>                                   $JC_GLYPH")" = empty ] \
+  || fail "an empty jcode composer carrying only the status glyph must classify empty"
+[ "$(jc_verdict "12>")" = empty ] \
+  || fail "a multi-digit jcode turn index must classify empty: the index grows with the conversation"
+[ "$(jc_verdict "1<> already submitted")" = pending ] \
+  || fail "a submitted jcode row still carries text and must not read empty"
+pass "an empty jcode composer classifies empty rather than unknown"
+
+[ "$(jc_verdict "1> draft text here                   $JC_METER")" = pending ] \
+  || fail "a jcode composer holding typed text must classify pending so an exit cannot concatenate onto it"
+[ "$(jc_verdict "1> draft text here                   $JC_GLYPH")" = pending ] \
+  || fail "typed text must still read pending when the row ends in the status glyph"
+[ "$(jc_verdict "1> 3.1k/1.0M")" = pending ] \
+  || fail "meter-shaped text the operator actually TYPED is content: only the row's furniture tail is stripped"
+pass "a typed jcode composer classifies pending, and meter-like typed text is not eaten"
+
+# The dead-shell rule is the reason this is scoped to an identified jcode pane.
+# It must survive: an agent that exited leaves a real shell prompt behind, and
+# typing an exit command into that shell is exactly what the rule prevents.
+[ "$(jc_verdict "> ")" = unknown ] \
+  || fail "a bare shell prompt must still read unknown even on a jcode pane: the agent may have exited"
+[ "$(jc_verdict "$ ")" = unknown ] \
+  || fail "a dollar shell prompt must still read unknown"
+pass "the dead-shell rule survives for a bare prompt on a jcode pane"
+
+# The normalization must be a no-op on every other harness's shape, because a
+# jcode pane is identified structurally and this must not drift into a
+# fleet-wide rewrite if that gate is ever reached wrongly.
+for other in '❯ claude row' '› codex row' '⟩ muse row' '2 > 1 is true' '$ x'; do
+  jc_row=$other
+  fm_composer_jcode_row_normalize_var jc_row
+  [ "$jc_row" = "$other" ] \
+    || fail "jcode normalization must not touch another harness's row: [$other] became [$jc_row]"
+done
+pass "jcode composer normalization leaves every other harness's row byte-identical"
+
 # --------------------------------------------------------- quota and detection
 grep -qE "^[[:space:]]+jcode\)[[:space:]]+printf 'claude" "$ROOT/bin/fm-quota-axi-lib.sh" \
   || fail "jcode must share the claude quota family: it spends the same subscription windows"
