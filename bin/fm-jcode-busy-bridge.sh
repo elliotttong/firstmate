@@ -41,7 +41,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 busy_event="$here/fm-busy-event.sh"
 
 usage() {
-  sed -n '31,34p' "$0" >&2
+  printf 'usage: fm-jcode-busy-bridge.sh <state-dir> <task-id> --gen <G> --working-dir <path> [--interval <secs>] [--startup-grace <secs>] [--once]\n' >&2
   exit 2
 }
 
@@ -85,11 +85,17 @@ publish() {  # <state> <event>
 
 # Publish this bridge's pid where fm_control_harness_wiring_paths says a jcode
 # task's wiring lives, so a relaunch can stop a superseded incarnation instead
-# of letting two bridges publish against the same task. Removed on any exit.
+# of letting two bridges publish against the same task. Removed on exit only
+# while it still names this process, so a superseded bridge that exits late
+# cannot delete its replacement's pidfile.
 pidfile="$state_dir/$task_id.jcode-bridge.pid"
 echo "$$" > "$pidfile" 2>/dev/null || true
-cleanup() { rm -f "$pidfile" 2>/dev/null || true; }
-trap cleanup EXIT INT TERM
+cleanup() {
+  [ "$(head -n 1 "$pidfile" 2>/dev/null)" = "$$" ] || return 0
+  rm -f "$pidfile" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
 
 # Seed `last` from the record this incarnation already owns, so a bridge that
 # is restarted (crash, daemon reload, a recovery re-arm) does not republish a

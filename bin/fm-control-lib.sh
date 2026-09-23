@@ -329,6 +329,30 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target>
   esac
 }
 
+# Stop a task's jcode busy bridge (bin/fm-jcode-busy-bridge.sh) and remove its
+# pidfile. jcode's busy wiring is a PROCESS, so retiring it means stopping it,
+# not only deleting the file. Only a process that IS a busy bridge is ever
+# signalled, so a recycled pid belonging to something unrelated survives.
+fm_control_stop_jcode_bridge() {  # <state-dir> <id>
+  local pidfile="${1-}/${2-}.jcode-bridge.pid" pid tries=0
+  [ -f "$pidfile" ] || return 0
+  pid=$(head -n 1 "$pidfile" 2>/dev/null)
+  case "$pid" in
+    ''|*[!0-9]*) rm -f -- "$pidfile"; return 0 ;;
+  esac
+  if ps -o args= -p "$pid" 2>/dev/null | grep -q "fm-jcode-busy-bridge.sh"; then
+    kill "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 50 ]; do
+      sleep 0.1
+      tries=$((tries + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f -- "$pidfile"
+}
+
 # The per-task wiring artifacts a harness leaves behind, so a relaunch that
 # changes harness (or re-arms the same one with a fresh busy generation) can
 # clear the previous incarnation's wiring instead of leaving a stale hook
@@ -344,9 +368,9 @@ fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id>
     pi|pi-signed) printf '%s\n' "$state/$id.pi-ext.ts" ;;
     omp) printf '%s\n' "$state/$id.omp-ext.ts" ;;
     # jcode's busy wiring is a background PROCESS (bin/fm-jcode-busy-bridge.sh),
-    # not a config file the harness reads. Its pidfile is the artifact a relaunch
-    # must clear, so a superseded incarnation's bridge cannot outlive its gen and
-    # keep publishing against a task that has already been replaced.
+    # not a config file the harness reads. Its pidfile names the process a
+    # relaunch stops (fm_control_stop_jcode_bridge), so a superseded
+    # incarnation's bridge cannot outlive its gen.
     jcode) printf '%s\n' "$state/$id.jcode-bridge.pid" ;;
     grok)
       printf '%s\n' "$wt/.fm-grok-turnend"

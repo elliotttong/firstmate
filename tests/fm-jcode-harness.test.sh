@@ -163,12 +163,25 @@ done
 pass "jcode composer normalization leaves every other harness's row byte-identical"
 
 # --------------------------------------------------------- quota and detection
-grep -qE "^[[:space:]]+jcode\)[[:space:]]+printf 'claude" "$ROOT/bin/fm-quota-axi-lib.sh" \
-  || fail "jcode must share the claude quota family: it spends the same subscription windows"
+JC_QUOTA=$(. "$ROOT/bin/fm-quota-axi-lib.sh" && fm_quota_provider_for_harness jcode)
+[ "$JC_QUOTA" = claude ] \
+  || fail "jcode must share the claude quota family: it spends the same subscription windows (got '$JC_QUOTA')"
 pass "jcode shares the claude quota family"
 
-grep -qE '^[[:space:]]+jcode\) echo "comm jcode"; return ;;' "$ROOT/bin/fm-harness.sh" \
-  || fail "bin/fm-harness.sh must detect an anchored jcode process name"
+# Real processes named jcode and jcode-helper, so detection is exercised against
+# a live ancestry walk rather than read from the source.
+mkdir -p "$TMP_ROOT/names"
+for name in jcode jcode-helper; do ln -s /bin/bash "$TMP_ROOT/names/$name"; done
+JC_ENV_UNSET=(-u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT -u CURSOR_AGENT
+  -u CURSOR_INVOKED_AS -u GEMINI_CLI -u FM_OMP_HARNESS -u ATLASSIAN_AGENT_TYPE -u ROVODEV_CLI)
+# shellcheck disable=SC2016  # $1 is expanded by the named child shell, not here.
+JC_DETECTED=$(env "${JC_ENV_UNSET[@]}" "$TMP_ROOT/names/jcode" -c '"$1"; :' _ "$ROOT/bin/fm-harness.sh")
+[ "$JC_DETECTED" = jcode ] \
+  || fail "bin/fm-harness.sh must detect a process named jcode as the jcode harness, got '$JC_DETECTED'"
+# shellcheck disable=SC2016  # $1 and $$ are expanded by the named child shell, not here.
+JC_DETECTED=$(env "${JC_ENV_UNSET[@]}" "$TMP_ROOT/names/jcode-helper" -c '"$1" ancestry "$$"; :' _ "$ROOT/bin/fm-harness.sh")
+[ "$JC_DETECTED" != 'comm jcode' ] \
+  || fail "an unrelated jcode-helper process must not claim the jcode harness"
 pass "jcode is detected by its own anchored process name"
 
 # ------------------------------------------------------------------- the bridge
@@ -218,6 +231,54 @@ grep -q 'source=fm-spawn' "$S3/t3.busy-state" \
   || fail "a session in a DIFFERENT worktree must not drive this task state"
 pass "the bridge attributes state only by matching working_dir"
 
+# A live bridge publishes its pid, and the shared stop (used by both relaunch
+# and teardown) must actually end the process, not only delete the file.
+printf '[{"working_dir":"%s","is_processing":false,"status":"ready"}]' "$WT_REAL" > "$SESS_FILE"
+S4="$TMP_ROOT/state4"; mkdir -p "$S4"
+GEN4=$("$ROOT/bin/fm-busy-event.sh" arm "$S4" t4 --state idle --source fm-spawn --event launch-brief)
+wait_for_bridge_pidfile() {  # <state> <id> <pid>
+  local i=0
+  while [ "$i" -lt 50 ]; do
+    [ "$(head -n 1 "$1/$2.jcode-bridge.pid" 2>/dev/null)" = "$3" ] && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+  return 1
+}
+"$BRIDGE" "$S4" t4 --gen "$GEN4" --working-dir "$WT_REAL" >/dev/null 2>&1 &
+BRIDGE_A=$!
+wait_for_bridge_pidfile "$S4" t4 "$BRIDGE_A" || fail "a running bridge must publish its pid"
+fm_control_stop_jcode_bridge "$S4" t4
+kill -0 "$BRIDGE_A" 2>/dev/null && fail "stopping a jcode bridge must end the process, not only remove its pidfile"
+wait "$BRIDGE_A" 2>/dev/null
+[ ! -e "$S4/t4.jcode-bridge.pid" ] || fail "stopping a jcode bridge must remove its pidfile"
+pass "stopping a jcode bridge ends the process and removes its pidfile"
+
+# A superseded bridge that exits after its replacement wrote the pidfile must
+# leave the replacement's pidfile alone, or the live bridge becomes unstoppable.
+"$BRIDGE" "$S4" t4 --gen "$GEN4" --working-dir "$WT_REAL" >/dev/null 2>&1 &
+BRIDGE_OLD=$!
+wait_for_bridge_pidfile "$S4" t4 "$BRIDGE_OLD" || fail "the superseded bridge never published its pid"
+sleep 600 &
+BRIDGE_NEW_STANDIN=$!
+echo "$BRIDGE_NEW_STANDIN" > "$S4/t4.jcode-bridge.pid"
+kill "$BRIDGE_OLD"
+for _ in $(seq 1 50); do
+  kill -0 "$BRIDGE_OLD" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$BRIDGE_OLD" 2>/dev/null; then
+  kill -KILL "$BRIDGE_OLD" "$BRIDGE_NEW_STANDIN" 2>/dev/null
+  fail "a bridge must exit on SIGTERM"
+fi
+wait "$BRIDGE_OLD" 2>/dev/null
+[ "$(head -n 1 "$S4/t4.jcode-bridge.pid" 2>/dev/null)" = "$BRIDGE_NEW_STANDIN" ] \
+  || fail "a superseded bridge's exit must not delete its replacement's pidfile"
+fm_control_stop_jcode_bridge "$S4" t4
+kill -0 "$BRIDGE_NEW_STANDIN" 2>/dev/null \
+  || fail "the stop must never signal a pid that is not a jcode bridge"
+kill "$BRIDGE_NEW_STANDIN" 2>/dev/null; wait "$BRIDGE_NEW_STANDIN" 2>/dev/null
+pass "a superseded bridge leaves its replacement's pidfile, and a foreign pid is never signalled"
+
 # ------------------------------------------------------------ refusal behaviour
 PRE="$ROOT/bin/fm-jcode-preflight.sh"
 [ -x "$PRE" ] || fail "the jcode preflight must be executable"
@@ -232,17 +293,6 @@ if "$SEED" tmux tgt "$WT_REAL" "$TMP_ROOT/no-such-brief.md" >/dev/null 2>&1; the
   fail "the seeder must refuse a missing brief"
 fi
 pass "the seeder refuses a missing brief rather than launching an uninstructed crewmate"
-
-grep -q 'jcode is a verified crewmate/scout adapter only' "$ROOT/bin/fm-spawn.sh" \
-  || fail "fm-spawn must refuse a jcode secondmate at launch"
-pass "fm-spawn refuses a jcode secondmate"
-
-grep -q 'stop_jcode_bridge' "$ROOT/bin/fm-teardown.sh" \
-  || fail "teardown must stop the jcode bridge or it outlives the task"
-pass "teardown stops the jcode bridge"
-
-
-
 
 # ------------------------------------------------ jcode as a PRIMARY harness
 # A primary is not spawned by fm-spawn: the captain types it in the pane. What
@@ -329,13 +379,6 @@ pass "every other harness keeps its own protocol, and unverified ones still fall
 # (schedule / initiative), and run unattended (ambient). Every one of those
 # produces agents with no task record, no worktree, and no supervision, so the
 # adapter must make them unreachable and REFUSE rather than quietly repair.
-
-grep -qE 'jcode" then \(\["none","minimal","low","medium","high","xhigh","max"\]' "$ROOT/bin/fm-bootstrap.sh" \
-  || fail "jcode's effort set must not offer swarm levels: they hand dispatch to jcode"
-if grep -qE 'jcode".*swarm' "$ROOT/bin/fm-bootstrap.sh"; then
-  fail "swarm efforts must not be selectable for a jcode crewmate"
-fi
-pass "jcode's dispatch-profile effort axis offers no swarm level"
 
 JC_TH="$TMP_ROOT/dispatch-home"
 mkdir -p "$JC_TH"
@@ -427,11 +470,20 @@ COLD_ELAPSED=$(( $(date +%s) - COLD_START ))
   || fail "the debug retry window must stay bounded; a wedged daemon took ${COLD_ELAPSED}s"
 pass "the cold-daemon retry window is bounded"
 
-if "$ROOT/bin/fm-jcode-seed.sh" tmux tgt "$WT_REAL" "$TMP_ROOT/nope.md" --effort swarm >/dev/null 2>&1; then
-  fail "the seeder must refuse a swarm effort"
-fi
-grep -q 'firstmate owns dispatch' "$ROOT/bin/fm-jcode-seed.sh" \
-  || fail "the seeder must state why swarm efforts are refused"
+# A real brief and a READY session, so the seeder reaches the effort and the
+# refusal is the swarm rule itself rather than an earlier missing-input exit.
+printf 'brief\n' > "$TMP_ROOT/swarm-brief.md"
+printf '[{"working_dir":"%s","is_processing":false,"status":"ready"}]' "$WT_REAL" > "$SESS_FILE"
+for swarm_effort in swarm swarm-deep; do
+  SEED_RC=0
+  SEED_ERR=$("$ROOT/bin/fm-jcode-seed.sh" tmux tgt "$WT_REAL" "$TMP_ROOT/swarm-brief.md" \
+    --effort "$swarm_effort" --timeout 3 2>&1 >/dev/null) || SEED_RC=$?
+  [ "$SEED_RC" -eq 1 ] || fail "the seeder must refuse effort $swarm_effort with exit 1, got $SEED_RC: $SEED_ERR"
+  case "$SEED_ERR" in
+    *"refusing effort '$swarm_effort'"*"firstmate owns dispatch"*) ;;
+    *) fail "the seeder must say why $swarm_effort is refused: $SEED_ERR" ;;
+  esac
+done
 pass "the seeder refuses swarm efforts and says why"
 
 # ============================================================================
@@ -600,5 +652,119 @@ pass "a jcode spawn arms the busy contract and classifies from a trusted source"
 
 [ -f "$MARKER" ] || fail "the launch brief was never typed into the pane"
 pass "the launch brief is typed into the crewmate pane"
+
+run_teardown() {  # <home> <fakebin> <id>
+  HOME="$1/user-home" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$1" \
+    FM_STATE_OVERRIDE="$1/state" FM_DATA_OVERRIDE="$1/data" \
+    FM_PROJECTS_OVERRIDE="$1/projects" FM_CONFIG_OVERRIDE="$1/config" \
+    FM_SPAWN_NO_GUARD=1 TMUX="${TMUX:-fake,1,0}" PATH="$2:$PATH" \
+    "$ROOT/bin/fm-teardown.sh" "$3" --force 2>&1
+}
+
+E2E_BRIDGE_PID=
+for _ in $(seq 1 50); do
+  E2E_BRIDGE_PID=$(head -n 1 "$E2E_STATE/$E2E_ID.jcode-bridge.pid" 2>/dev/null || true)
+  [ -z "$E2E_BRIDGE_PID" ] || break
+  sleep 0.1
+done
+if [ -z "$E2E_BRIDGE_PID" ] || ! kill -0 "$E2E_BRIDGE_PID" 2>/dev/null; then
+  fail "a jcode spawn must leave its busy bridge running"
+fi
+TD_OUT=$(run_teardown "$HOME_DIR" "$FAKEBIN_DIR" "$E2E_ID") \
+  || fail "teardown of a jcode crewmate failed: $TD_OUT"
+if kill -0 "$E2E_BRIDGE_PID" 2>/dev/null; then
+  kill "$E2E_BRIDGE_PID" 2>/dev/null
+  fail "teardown must stop the jcode busy bridge, or it outlives the task"
+fi
+[ ! -e "$E2E_STATE/$E2E_ID.jcode-bridge.pid" ] || fail "teardown must remove the bridge pidfile"
+pass "teardown stops the jcode busy bridge process"
+
+# A secondmate must itself act as a primary, and jcode has no verified primary
+# supervision path for that role, so the spawn is refused outright.
+SM_ID=jcode-secondmate-1
+e2e_case jcode-secondmate "$SM_ID"
+SM_RC=0
+SM_OUT=$(fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$SM_ID" --secondmate jcode 2>&1) || SM_RC=$?
+[ "$SM_RC" -ne 0 ] || fail "a jcode secondmate spawn must be refused"
+case "$SM_OUT" in
+  *"jcode is a verified crewmate/scout adapter only"*) ;;
+  *) fail "the jcode secondmate refusal must state its reason: $SM_OUT" ;;
+esac
+pass "fm-spawn refuses a jcode secondmate"
+
+# A home the preflight refuses must never reach a pane: the refusal has to come
+# before the launch command is sent, or jcode is already open in the pane.
+REF_ID=jcode-refused-1
+e2e_case jcode-refused "$REF_ID"
+sed -i 's/^swarm = false/swarm = true/' "$HOME_DIR/user-home/.jcode/config.toml"
+REF_LOG="$CASE_DIR/launch.log"
+: > "$REF_LOG"
+REF_RC=0
+REF_OUT=$(FM_FAKE_LAUNCH_LOG="$REF_LOG" fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" \
+  "$REF_ID" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1) || REF_RC=$?
+[ "$REF_RC" -ne 0 ] || fail "a jcode spawn on a home with swarm enabled must be refused"
+case "$REF_OUT" in
+  *"jcode preflight refused"*) ;;
+  *) fail "the refusal must come from the jcode preflight: $REF_OUT" ;;
+esac
+[ ! -s "$REF_LOG" ] || fail "a preflight-refused jcode spawn must not send a launch command: $(cat "$REF_LOG")"
+pass "a preflight refusal stops a jcode spawn before anything launches"
+
+# ============================================================================
+# REAL TMUX: bin/fm-tmux-lib.sh's fm_tmux_composer_state against a live pane
+# whose foreground process is named jcode and renders jcode's numbered composer.
+# ============================================================================
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "skip: tmux not found; jcode composer backend regression not run"
+else
+  JC_TMUX=$(command -v tmux)
+  JC_SOCK="fm-jcode-composer-$$"
+  JC_SHIM="$TMP_ROOT/tmux-shim"
+  mkdir -p "$JC_SHIM"
+  printf '#!/usr/bin/env bash\nexec %q -L %q "$@"\n' "$JC_TMUX" "$JC_SOCK" > "$JC_SHIM/tmux"
+  chmod +x "$JC_SHIM/tmux"
+  trap '"$JC_TMUX" -L "$JC_SOCK" kill-server >/dev/null 2>&1; rm -rf "$TMP_ROOT"' EXIT
+
+  # A pane "agent" that draws one transcript row, then the composer row with the
+  # cursor left on it, and stays in the foreground. #!/bin/bash (not env) keeps
+  # the process name equal to the script's own name.
+  write_pane_agent() {  # <dir> <name>
+    mkdir -p "$1"
+    # shellcheck disable=SC2016  # the generated script expands $1 when it runs.
+    printf '#!/bin/bash\nprintf "transcript row\\n%%s" "$(cat "$1")"\nwhile :; do sleep 60; done\n' > "$1/$2"
+    chmod +x "$1/$2"
+  }
+  write_pane_agent "$TMP_ROOT/pane-jcode" jcode
+  write_pane_agent "$TMP_ROOT/pane-other" other-agent
+
+  composer_state_for() {  # <agent-path> <row> -> verdict
+    local row_file="$TMP_ROOT/pane-row" win out i=0
+    printf '%s' "$2" > "$row_file"
+    win="w$RANDOM"
+    PATH="$JC_SHIM:$PATH" tmux new-session -d -s "$win" -x 120 -y 10 "$1" "$row_file" \
+      || { echo tmux-failed; return 0; }
+    while [ "$i" -lt 50 ]; do
+      case "$(PATH="$JC_SHIM:$PATH" tmux capture-pane -p -t "$win" 2>/dev/null)" in
+        *transcript*) break ;;
+      esac
+      sleep 0.1; i=$((i + 1))
+    done
+    out=$(PATH="$JC_SHIM:$PATH" bash -c '. "$1/bin/fm-tmux-lib.sh" && fm_tmux_composer_state "$2"' _ "$ROOT" "$win")
+    PATH="$JC_SHIM:$PATH" tmux kill-session -t "$win" >/dev/null 2>&1
+    printf '%s' "$out"
+  }
+
+  JC_EMPTY_ROW="1>                                   $JC_METER"
+  JC_TYPED_ROW="1> draft text here                   $JC_METER"
+  v=$(composer_state_for "$TMP_ROOT/pane-jcode/jcode" "$JC_EMPTY_ROW")
+  [ "$v" = empty ] || fail "an empty jcode composer in a live jcode pane must classify empty through the backend, got '$v'"
+  v=$(composer_state_for "$TMP_ROOT/pane-jcode/jcode" "$JC_TYPED_ROW")
+  [ "$v" = pending ] || fail "a typed jcode composer in a live jcode pane must classify pending through the backend, got '$v'"
+  v=$(composer_state_for "$TMP_ROOT/pane-jcode/jcode" "> ")
+  [ "$v" = unknown ] || fail "a bare prompt must stay unknown even in a jcode pane, got '$v'"
+  v=$(composer_state_for "$TMP_ROOT/pane-other/other-agent" "$JC_EMPTY_ROW")
+  [ "$v" = unknown ] || fail "jcode's composer shape must not be recognised in a pane that is not jcode, got '$v'"
+  pass "fm_tmux_composer_state reads jcode's composer only in a pane whose foreground process is jcode"
+fi
 
 echo "all fm-jcode-harness tests passed"

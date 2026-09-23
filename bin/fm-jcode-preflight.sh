@@ -65,7 +65,7 @@ if [ "$debug_on" -eq 0 ]; then
       || fail "could not set display.debug_socket in $cfg"
     printf 'fm-jcode-preflight: set display.debug_socket = true (daemon restart required)\n' >&2
   else
-    fail "display.debug_socket is not true in $cfg; re-run with --fix, or export JCODE_DEBUG_CONTROL=1 for the DAEMON"
+    fail "display.debug_socket is not true in $cfg; re-run with --fix"
   fi
 fi
 

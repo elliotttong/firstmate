@@ -1311,20 +1311,7 @@ stop_jcode_bridge() {  # <state-dir> <id>
   # would keep polling the daemon forever and, worse, could publish against a
   # task id a later spawn reuses. Stopped BEFORE retire_busy_state so it cannot
   # write a record back after retirement.
-  local state_dir=$1 id=$2 pidfile pid
-  pidfile="$state_dir/$id.jcode-bridge.pid"
-  [ -f "$pidfile" ] || return 0
-  pid=$(head -n 1 "$pidfile" 2>/dev/null)
-  case "$pid" in
-    ''|*[!0-9]*) rm -f "$pidfile"; return 0 ;;
-  esac
-  # Only ever signal a process that IS this task's bridge; a recycled pid
-  # belonging to something unrelated must never be killed.
-  if ps -o args= -p "$pid" 2>/dev/null | grep -q "fm-jcode-busy-bridge.sh"; then
-    kill "$pid" 2>/dev/null || true
-  fi
-  rm -f "$pidfile"
-  return 0
+  fm_control_stop_jcode_bridge "$1" "$2"
 }
 
 remove_kimi_turnend_auth() {

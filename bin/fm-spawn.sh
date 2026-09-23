@@ -1311,6 +1311,9 @@ clear_relaunch_harness_wiring() {
   # unrecognized value resolves to no adapter, which is also the case in which
   # no wiring was armed to begin with.
   harness=$(fm_control_harness_family "$harness") || harness=
+  if [ "$harness" = jcode ]; then
+    fm_control_stop_jcode_bridge "$state" "$id" || return 1
+  fi
   token_path=$(fm_control_harness_turnend_token_path "$harness" "$state" "$id") || return 1
   token=
   if [ -n "$token_path" ] && [ -f "$token_path" ]; then
@@ -2518,6 +2521,13 @@ case "$LAUNCH" in
       exit 1
     fi
     LAUNCH=${LAUNCH//__JCODEBIN__/$(shell_quote "$JCODE_BIN")}
+    # Refuse before anything launches: a jcode home that would open its
+    # onboarding wizard or run unsupervised swarm/ambient work must never
+    # reach a pane.
+    if ! "$FM_ROOT/bin/fm-jcode-preflight.sh" >/dev/null; then
+      echo "error: jcode preflight refused the spawn of $ID; run bin/fm-jcode-preflight.sh for the reason" >&2
+      exit 1
+    fi
     ;;
 esac
 
@@ -4966,10 +4976,6 @@ if [ "$HARNESS" = jcode ]; then
   # the typed-pointer path kimi and rovo already established above, for the same
   # reason. Unlike those two, delivery here is PROVEN from the daemon's own
   # is_processing rather than a timed wait (bin/fm-jcode-seed.sh).
-  if ! "$FM_ROOT/bin/fm-jcode-preflight.sh" >/dev/null; then
-    echo "error: jcode preflight refused the spawn of $ID; run bin/fm-jcode-preflight.sh for the reason" >&2
-    exit 1
-  fi
   # The busy bridge must be live BEFORE the brief starts a turn, or the opening
   # turn-start is missed and the task never records the idle that closes it.
   # It carries this incarnation's gen, so a superseded bridge fails closed.
