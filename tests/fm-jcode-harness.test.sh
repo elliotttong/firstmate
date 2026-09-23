@@ -178,8 +178,16 @@ JC_ENV_UNSET=(-u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT -u
 JC_DETECTED=$(env "${JC_ENV_UNSET[@]}" "$TMP_ROOT/names/jcode" -c '"$1"; :' _ "$ROOT/bin/fm-harness.sh")
 [ "$JC_DETECTED" = jcode ] \
   || fail "bin/fm-harness.sh must detect a process named jcode as the jcode harness, got '$JC_DETECTED'"
-# shellcheck disable=SC2016  # $1 and $$ are expanded by the named child shell, not here.
-JC_DETECTED=$(env "${JC_ENV_UNSET[@]}" "$TMP_ROOT/names/jcode-helper" -c '"$1" ancestry "$$"; :' _ "$ROOT/bin/fm-harness.sh")
+# The helper is orphaned before it walks, so the walk sees only the helper and
+# init: on a host running a real jcode session the walk would otherwise climb
+# legitimately to that session and say nothing about the helper's own name.
+JC_HELPER_OUT="$TMP_ROOT/jcode-helper.out"
+# shellcheck disable=SC2016  # $1, $2 and $$ are expanded by the named child shell, not here.
+( env "${JC_ENV_UNSET[@]}" "$TMP_ROOT/names/jcode-helper" \
+    -c 'sleep 0.3; "$1" ancestry "$$" > "$2.tmp"; mv "$2.tmp" "$2"; :' _ "$ROOT/bin/fm-harness.sh" "$JC_HELPER_OUT" & )
+for _ in $(seq 1 50); do [ -f "$JC_HELPER_OUT" ] && break; sleep 0.1; done
+[ -f "$JC_HELPER_OUT" ] || fail "the orphaned jcode-helper probe never reported"
+JC_DETECTED=$(cat "$JC_HELPER_OUT")
 [ "$JC_DETECTED" != 'comm jcode' ] \
   || fail "an unrelated jcode-helper process must not claim the jcode harness"
 pass "jcode is detected by its own anchored process name"
@@ -500,12 +508,15 @@ pass "the seeder refuses swarm efforts and says why"
 # the sequence bin/fm-jcode-seed.sh depends on - wait for ready, type, then
 # require is_processing as proof the brief actually started a turn - so a seeder
 # that skipped either half would fail here.
-write_fake_jcode() {  # <fakebin> <wd-file> <marker>
-  local fakebin=$1 wdfile=$2 marker=$3
+write_fake_jcode() {  # <fakebin> <wd-file> <marker> [daemon-marker]
+  local fakebin=$1 wdfile=$2 marker=$3 daemon=${4-}
   # shellcheck disable=SC2016  # single quotes are deliberate: these lines are the GENERATED script body, expanded by the fake when it runs, not here.
   {
     echo '#!/usr/bin/env bash'
     echo 'if [ "${1:-}" != debug ]; then exit 0; fi'
+    if [ -n "$daemon" ]; then
+      echo "[ -f '$daemon' ] || { echo 'Debug socket not found; a jcode server must be running' >&2; exit 1; }"
+    fi
     echo "wd=\$(cat '$wdfile' 2>/dev/null || true)"
     echo 'if [ -z "$wd" ]; then echo "[]"; exit 0; fi'
     echo "if [ -f '$marker' ]; then proc=true; st=running; else proc=false; st=ready; fi"
@@ -523,8 +534,8 @@ write_fake_jcode() {  # <fakebin> <wd-file> <marker>
 # project dir among them) and the LAST one is not the task worktree, so reading
 # it there captured the wrong directory. fm-spawn passes the task worktree to
 # the seeder directly, and the fixture seeds that same path.
-wrap_fake_tmux_marker() {  # <fakebin> <marker>
-  local fakebin=$1 marker=$2 inner
+wrap_fake_tmux_marker() {  # <fakebin> <marker> [daemon-marker]
+  local fakebin=$1 marker=$2 daemon=${3-} inner
   inner="$fakebin/tmux-inner"
   mv "$fakebin/tmux" "$inner"
   # shellcheck disable=SC2016  # single quotes are deliberate: these lines are the GENERATED script body, expanded by the fake when it runs, not here.
@@ -533,6 +544,7 @@ wrap_fake_tmux_marker() {  # <fakebin> <marker>
     echo 'for a in "$@"; do'
     echo '  case "$a" in'
     echo "    *FIRSTMATE_OP*) : > '$marker' ;;"
+    [ -z "$daemon" ] || echo "    \". '\"*\"'\") : > '$daemon' ;;"
     echo '  esac'
     echo 'done'
     echo "exec '$inner' \"\$@\""
@@ -569,8 +581,11 @@ enabled = false
   } > "$jh/config.toml"
 }
 
-e2e_case() {  # <name> <id> -> sets CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR MARKER
-  local name=$1 id=$2
+# With a third argument `cold`, no jcode daemon answers until the launch command
+# has been sent to the pane, which is how a real machine behaves after a reboot:
+# only a launched jcode client brings the server up.
+e2e_case() {  # <name> <id> [cold] -> sets CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR MARKER
+  local name=$1 id=$2 daemon=
   CASE_DIR="$TMP_ROOT/$name"
   HOME_DIR="$CASE_DIR/home"
   PROJ_DIR="$CASE_DIR/project"
@@ -586,8 +601,9 @@ e2e_case() {  # <name> <id> -> sets CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DI
   # worktree, which for this fixture is WT_DIR; the tmux -c capture in the
   # wrapper below overrides it if fm-spawn ever creates a different one.
   (cd "$WT_DIR" && pwd -P) > "$WDFILE"
-  write_fake_jcode "$FAKEBIN_DIR" "$WDFILE" "$MARKER"
-  wrap_fake_tmux_marker "$FAKEBIN_DIR" "$MARKER"
+  [ "${3-}" != cold ] || daemon="$CASE_DIR/daemon.up"
+  write_fake_jcode "$FAKEBIN_DIR" "$WDFILE" "$MARKER" "$daemon"
+  wrap_fake_tmux_marker "$FAKEBIN_DIR" "$MARKER" "$daemon"
 }
 
 E2E_ID=jcode-e2e-1
@@ -709,6 +725,23 @@ case "$REF_OUT" in
 esac
 [ ! -s "$REF_LOG" ] || fail "a preflight-refused jcode spawn must not send a launch command: $(cat "$REF_LOG")"
 pass "a preflight refusal stops a jcode spawn before anything launches"
+
+# The first jcode spawn after a reboot finds no daemon running. The live daemon
+# probe can only pass once the launch has started one, so that spawn must still
+# succeed rather than be refused for a daemon it was about to start.
+COLD_ID=jcode-cold-1
+e2e_case jcode-cold "$COLD_ID" cold
+COLD_LOG="$CASE_DIR/launch.log"
+: > "$COLD_LOG"
+COLD_RC=0
+COLD_OUT=$(FM_JCODE_DEBUG_WAIT=2 FM_FAKE_LAUNCH_LOG="$COLD_LOG" fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" \
+  "$COLD_ID" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1) || COLD_RC=$?
+[ "$COLD_RC" -eq 0 ] || fail "a jcode spawn with no daemon running yet must succeed: $COLD_OUT"
+[ -f "$CASE_DIR/daemon.up" ] || fail "the cold case must start with no daemon until the launch"
+[ -f "$MARKER" ] || fail "a cold-daemon jcode spawn must still deliver its brief"
+COLD_TD=$(run_teardown "$HOME_DIR" "$FAKEBIN_DIR" "$COLD_ID") \
+  || fail "teardown of the cold-daemon jcode crewmate failed: $COLD_TD"
+pass "a jcode spawn succeeds when no daemon is running until the launch starts it"
 
 # ============================================================================
 # REAL TMUX: bin/fm-tmux-lib.sh's fm_tmux_composer_state against a live pane

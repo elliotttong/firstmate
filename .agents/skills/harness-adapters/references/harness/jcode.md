@@ -126,9 +126,16 @@ reach.
 | `/effort swarm`, `/effort swarm-deep` | put the agent straight into swarm mode | not offered |
 
 `bin/fm-jcode-preflight.sh` REFUSES a spawn unless all of the above hold, and
-`bin/fm-spawn.sh` runs it before launching. The refusal is deliberate: silently
-rewriting a captain's jcode config would change their own interactive sessions
-too, so the adapter reports what is wrong and stops.
+`bin/fm-spawn.sh` runs it in two halves. The static checks (onboarding, provider,
+`debug_socket`, and every row above) run with `--static` BEFORE the pane
+launches, so a bad home never reaches a pane. The live `jcode debug sessions`
+probe runs AFTER the launch, with its bounded `FM_JCODE_DEBUG_WAIT` retry,
+because only a launched client starts the daemon: `jcode debug` against a
+machine with no running server fails and starts nothing. Moving the live probe
+before the launch was tried and reverted - it refused the first jcode spawn
+after every reboot. The refusal is deliberate: silently rewriting a captain's
+jcode config would change their own interactive sessions too, so the adapter
+reports what is wrong and stops.
 
 The effort axis is enforced twice. `bin/fm-bootstrap.sh` does not offer `swarm`
 or `swarm-deep` as dispatch-profile levels, and `bin/fm-jcode-seed.sh` refuses

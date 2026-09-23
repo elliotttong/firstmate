@@ -14,9 +14,17 @@
 # than synthesising undocumented state files, matching the house rule that an
 # unverified adapter is refused rather than guessed at.
 #
-# Usage: fm-jcode-preflight.sh [--fix]
-#   --fix  set display.debug_socket = true in config.toml (the one repair that
-#          is documented and reversible); everything else still only reports.
+# Usage: fm-jcode-preflight.sh [--fix] [--static]
+#   --fix     set display.debug_socket = true in config.toml (the one repair
+#             that is documented and reversible); everything else still only
+#             reports.
+#   --static  run only the checks that answer from the jcode home alone (steps
+#             1-3b) and skip the live daemon probe (step 4). fm-spawn runs this
+#             BEFORE the pane launch and the full check AFTER it: only a
+#             launched jcode client brings the daemon up, and `jcode debug`
+#             against a machine with no running server fails and starts
+#             nothing, so a pre-launch live probe would refuse the first jcode
+#             spawn after every reboot. Do not move the live probe pre-launch.
 #
 # Environment:
 #   FM_JCODE_DEBUG_WAIT  seconds to keep retrying the daemon's debug query
@@ -31,7 +39,14 @@ hints="$jcode_home/setup_hints.json"
 debug_wait_s=${FM_JCODE_DEBUG_WAIT:-10}
 case "$debug_wait_s" in ''|*[!0-9]*) debug_wait_s=10 ;; esac
 fix=0
-[ "${1-}" != "--fix" ] || fix=1
+static_only=0
+for arg in "$@"; do
+  case "$arg" in
+    --fix) fix=1 ;;
+    --static) static_only=1 ;;
+    *) printf 'usage: fm-jcode-preflight.sh [--fix] [--static]\n' >&2; exit 2 ;;
+  esac
+done
 
 fail() { printf 'fm-jcode-preflight: %s\n' "$1" >&2; exit 1; }
 
@@ -91,6 +106,11 @@ if grep -qE '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true' "$cfg" 2>/dev/nu
   if sed -n '/^\[ambient\]/,/^\[/p' "$cfg" 2>/dev/null | grep -qE '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true'; then
     fail "[ambient] enabled = true in $cfg; ambient mode runs unattended turns outside firstmate's dispatch"
   fi
+fi
+
+if [ "$static_only" -eq 1 ]; then
+  printf 'fm-jcode-preflight: ok (onboarding done, provider connected, dispatch owned by firstmate)\n'
+  exit 0
 fi
 
 # 4. The daemon must actually answer a debug query. This is the only check that

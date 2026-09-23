@@ -2523,9 +2523,10 @@ case "$LAUNCH" in
     LAUNCH=${LAUNCH//__JCODEBIN__/$(shell_quote "$JCODE_BIN")}
     # Refuse before anything launches: a jcode home that would open its
     # onboarding wizard or run unsupervised swarm/ambient work must never
-    # reach a pane.
-    if ! "$FM_ROOT/bin/fm-jcode-preflight.sh" >/dev/null; then
-      echo "error: jcode preflight refused the spawn of $ID; run bin/fm-jcode-preflight.sh for the reason" >&2
+    # reach a pane. Static checks only; the live daemon probe runs after the
+    # launch, because only the launch starts the daemon.
+    if ! "$FM_ROOT/bin/fm-jcode-preflight.sh" --static >/dev/null; then
+      echo "error: jcode preflight refused the spawn of $ID; run bin/fm-jcode-preflight.sh --static for the reason" >&2
       exit 1
     fi
     ;;
@@ -4976,6 +4977,10 @@ if [ "$HARNESS" = jcode ]; then
   # the typed-pointer path kimi and rovo already established above, for the same
   # reason. Unlike those two, delivery here is PROVEN from the daemon's own
   # is_processing rather than a timed wait (bin/fm-jcode-seed.sh).
+  if ! "$FM_ROOT/bin/fm-jcode-preflight.sh" >/dev/null; then
+    echo "error: jcode preflight refused the spawn of $ID; run bin/fm-jcode-preflight.sh for the reason" >&2
+    exit 1
+  fi
   # The busy bridge must be live BEFORE the brief starts a turn, or the opening
   # turn-start is missed and the task never records the idle that closes it.
   # It carries this incarnation's gen, so a superseded bridge fails closed.
