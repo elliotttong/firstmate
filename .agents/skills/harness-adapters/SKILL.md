@@ -36,6 +36,7 @@ Deliver lifecycle actions only through `../../../bin/fm-control.sh <task-id> int
 Never type an interrupt key or exit command through `fm-send`, where routing-marked lifecycle text becomes chat.
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
 Muse, Gemini, AGY, and Devin are verified only for crewmate and scout work, never a secondmate or primary.
+jcode is verified as a primary and for crewmate and scout work, but is refused as a secondmate; `references/harness/jcode.md` records why.
 
 ## Detection
 
