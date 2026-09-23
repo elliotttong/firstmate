@@ -38,10 +38,11 @@ with it.
 
 ## Registration
 
-Registered as a crewmate/scout adapter. `fm_control_harness_supports_kind`
-refuses a `--secondmate` launch, matching muse/gemini/rovo: no primary
-supervision protocol has been verified. `bin/fm-spawn.sh` refuses it again at
-launch so the refusal cannot be bypassed by a raw harness argument.
+Registered as a crewmate/scout adapter and verified as a primary
+(`docs/supervision-protocols/jcode.md`). `fm_control_harness_supports_kind`
+refuses a `--secondmate` launch, matching muse/gemini/rovo: the secondmate role
+has not been verified. `bin/fm-spawn.sh` refuses it again at launch so the
+refusal cannot be bypassed by a raw harness argument.
 
 | Site | Value |
 |---|---|
@@ -69,7 +70,11 @@ that do not apply elsewhere:
   keeps polling forever and could publish against a task id a later spawn reuses.
   It is stopped BEFORE `retire_busy_state` so it cannot write back after
   retirement, and it only ever signals a pid whose `args` still name the bridge,
-  so a recycled pid belonging to something else is never killed.
+  so a recycled pid belonging to something else is never killed. A
+  `fm-spawn.sh --relaunch` stops the superseded bridge the same way
+  (`fm_control_stop_jcode_bridge`) before arming a new one, and a bridge removes
+  the pidfile on exit only while it still names its own pid, so a late-exiting
+  predecessor cannot delete its replacement's pidfile.
 - The bridge seeds its in-memory `last` from the record it already owns (gen
   matched), so a restart after a crash or daemon reload does not republish a
   state that is already recorded.
