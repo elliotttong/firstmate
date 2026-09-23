@@ -318,6 +318,60 @@ JCODE_HOME="$JC_TH" "$ROOT/bin/fm-jcode-preflight.sh" >/dev/null 2>&1 \
   || fail "preflight must accept a home where firstmate owns dispatch"
 pass "preflight accepts a home where firstmate owns dispatch"
 
+# ------------------------------------------------- cold-daemon debug retry
+# jcode's daemon starts lazily and a cold one loses the FIRST debug query while
+# it is still binding its socket. Observed 2026-09-23: the preflight refused a
+# legitimate spawn, and the same command seconds later reported ok untouched.
+# The retry window must absorb that without absorbing a genuinely dead daemon.
+COLD_BIN="$TMP_ROOT/coldbin"
+mkdir -p "$COLD_BIN"
+COLD_COUNT="$TMP_ROOT/cold-attempts"
+
+write_cold_jcode() {  # <succeed-on-attempt>  (0 = never answer)
+  : > "$COLD_COUNT"
+  # shellcheck disable=SC2016  # single quotes are deliberate: this is the GENERATED script body.
+  {
+    echo '#!/usr/bin/env bash'
+    echo '[ "${1:-}" = debug ] || exit 0'
+    echo "echo x >> '$COLD_COUNT'"
+    echo "n=\$(wc -l < '$COLD_COUNT')"
+    echo "[ '$1' -gt 0 ] && [ \"\$n\" -ge '$1' ] || exit 1"
+    echo 'echo "[]"'
+  } > "$COLD_BIN/jcode"
+  chmod +x "$COLD_BIN/jcode"
+}
+
+# A daemon that misses its first query and answers the second is a COLD daemon,
+# and refusing on it costs a real spawn.
+write_cold_jcode 2
+PATH="$COLD_BIN:$PATH" JCODE_HOME="$JC_TH" FM_JCODE_DEBUG_WAIT=5 \
+  "$ROOT/bin/fm-jcode-preflight.sh" >/dev/null 2>&1 \
+  || fail "preflight must retry a cold daemon's first missed debug query rather than refusing the spawn"
+[ "$(wc -l < "$COLD_COUNT")" -ge 2 ] \
+  || fail "preflight must actually re-query the daemon, not pass on the first call's failure"
+pass "preflight retries a cold daemon rather than refusing a legitimate spawn"
+
+# A daemon that never answers must still refuse: the retry widens the evidence,
+# it does not weaken the check.
+write_cold_jcode 0
+if PATH="$COLD_BIN:$PATH" JCODE_HOME="$JC_TH" FM_JCODE_DEBUG_WAIT=2 \
+   "$ROOT/bin/fm-jcode-preflight.sh" >/dev/null 2>&1; then
+  fail "preflight must still refuse when the daemon never answers; the bridge would publish nothing"
+fi
+[ "$(wc -l < "$COLD_COUNT")" -ge 2 ] \
+  || fail "a refusal must come from exhausting the window, not from one attempt"
+pass "preflight still refuses a daemon that never answers"
+
+# The window is bounded, so a wedged daemon cannot stall a spawn indefinitely.
+write_cold_jcode 0
+COLD_START=$(date +%s)
+PATH="$COLD_BIN:$PATH" JCODE_HOME="$JC_TH" FM_JCODE_DEBUG_WAIT=2 \
+  "$ROOT/bin/fm-jcode-preflight.sh" >/dev/null 2>&1 || true
+COLD_ELAPSED=$(( $(date +%s) - COLD_START ))
+[ "$COLD_ELAPSED" -le 15 ] \
+  || fail "the debug retry window must stay bounded; a wedged daemon took ${COLD_ELAPSED}s"
+pass "the cold-daemon retry window is bounded"
+
 if "$ROOT/bin/fm-jcode-seed.sh" tmux tgt "$WT_REAL" "$TMP_ROOT/nope.md" --effort swarm >/dev/null 2>&1; then
   fail "the seeder must refuse a swarm effort"
 fi

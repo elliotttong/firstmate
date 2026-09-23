@@ -18,12 +18,18 @@
 #   --fix  set display.debug_socket = true in config.toml (the one repair that
 #          is documented and reversible); everything else still only reports.
 #
+# Environment:
+#   FM_JCODE_DEBUG_WAIT  seconds to keep retrying the daemon's debug query
+#                        before refusing (default 10, 0 disables the retry).
+#
 # Exit: 0 safe to spawn; 1 refused, with the reason on stderr.
 set -u
 
 jcode_home=${JCODE_HOME:-$HOME/.jcode}
 cfg="$jcode_home/config.toml"
 hints="$jcode_home/setup_hints.json"
+debug_wait_s=${FM_JCODE_DEBUG_WAIT:-10}
+case "$debug_wait_s" in ''|*[!0-9]*) debug_wait_s=10 ;; esac
 fix=0
 [ "${1-}" != "--fix" ] || fix=1
 
@@ -89,9 +95,29 @@ fi
 
 # 4. The daemon must actually answer a debug query. This is the only check that
 #    proves the bridge will work, rather than inferring it from config.
-if ! JCODE_DEBUG_CONTROL=1 jcode debug sessions >/dev/null 2>&1; then
-  fail "daemon did not answer 'jcode debug sessions'; restart it so the new setting takes effect"
-fi
+#
+#    Bounded RETRY rather than a single call: jcode's daemon is started lazily
+#    and a cold one loses the first query while it is still binding its debug
+#    socket. Observed 2026-09-23 - this check refused a legitimate spawn with
+#    "daemon did not answer", and the identical command run seconds later
+#    reported ok with no intervention. A first-call miss is therefore a cold
+#    daemon, not a misconfigured one, and refusing on it costs a real spawn.
+#    A daemon that is genuinely down still fails, just after the window: every
+#    attempt in it must miss, so this widens the evidence rather than weakening
+#    the check. The window is bounded so a wedged daemon cannot stall a spawn.
+debug_answered=0
+waited=0
+while :; do
+  if JCODE_DEBUG_CONTROL=1 jcode debug sessions >/dev/null 2>&1; then
+    debug_answered=1
+    break
+  fi
+  [ "$waited" -lt "$debug_wait_s" ] || break
+  waited=$((waited + 1))
+  sleep 1
+done
+[ "$debug_answered" -eq 1 ] \
+  || fail "daemon did not answer 'jcode debug sessions' within ${debug_wait_s}s; restart it so the new setting takes effect"
 
 printf 'fm-jcode-preflight: ok (onboarding done, provider connected, debug control live)\n'
 exit 0
