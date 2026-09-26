@@ -226,7 +226,83 @@ def command_whoami(args):
     return 0
 
 
+# The Action Items fields this board needs, by owner. Firstmate writes the
+# first group and the captain never does; the captain writes the second and
+# firstmate never does. Status, Priority and Lane already exist and stay his.
+# Every tag is a fixed option list so filters cannot silently miss a spelling.
+DEV_STATUS = ["Queued", "Needs design", "Specced", "Building", "In review", "Done", "Failed"]
+KINDS = ["ship", "scout", "captain", "task"]
+SURFACES = ["Extension", "Web app", "Landing", "Mobile", "Business OS", "WordPress", "Backend", "Firstmate"]
+
+
+def select_spec(options):
+    return {"select": {"options": [{"name": name} for name in options]}}
+
+
+def action_items_schema(repos):
+    return {
+        # firstmate-owned
+        "Task ID": {"rich_text": {}},
+        "Kind": select_spec(KINDS),
+        "Dev status": select_spec(DEV_STATUS),
+        "Last checked": {"date": {}},
+        "Needs you": {"checkbox": {}},
+        "Question": {"rich_text": {}},
+        "Repo": select_spec(repos),
+        "PR": {"url": {}},
+        "Report": {"rich_text": {}},
+        "Worker": {"rich_text": {}},
+        # captain-owned
+        "Ready": {"checkbox": {}},
+        "Answer": {"rich_text": {}},
+        "Surface": select_spec(SURFACES),
+        "Design handover": {"url": {}},
+    }
+
+
+def command_ensure_schema(args):
+    """ensure-schema [--dry-run]: add missing Action Items properties.
+
+    Additive only: a property that already exists is never retyped, renamed,
+    or deleted, and its options are never replaced. An existing property of
+    the wrong type is reported and the command exits 1 without writing.
+    """
+    dry_run = False
+    for flag in args:
+        if flag == "--dry-run":
+            dry_run = True
+        else:
+            die("unknown ensure-schema argument: %s" % flag, 2)
+    repos = [r for r in os.environ.get("FM_NOTION_REPOS", "").split(",") if r]
+    if not repos:
+        die("FM_NOTION_REPOS is empty; the wrapper passes the registered projects", 2)
+    database = database_id()
+    current = request("GET", "/databases/%s" % database).get("properties") or {}
+    wanted = action_items_schema(repos)
+    missing = {}
+    conflicts = []
+    for name, spec in wanted.items():
+        kind = next(iter(spec))
+        have = current.get(name)
+        if have is None:
+            missing[name] = spec
+        elif have.get("type") != kind:
+            conflicts.append("%s is %s, expected %s" % (name, have.get("type"), kind))
+        else:
+            sys.stdout.write("present: %s\n" % name)
+    for line in conflicts:
+        sys.stdout.write("conflict: %s\n" % line)
+    for name in missing:
+        sys.stdout.write("%s: %s\n" % ("would add" if dry_run else "add", name))
+    if conflicts:
+        die("%d property type conflict(s); nothing written" % len(conflicts))
+    if missing and not dry_run:
+        request("PATCH", "/databases/%s" % database, {"properties": missing})
+    return 0
+
+
 COMMANDS = {
+    "ensure-schema": command_ensure_schema,
     "query": command_query,
     "whoami": command_whoami,
 }

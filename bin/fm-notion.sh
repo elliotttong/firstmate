@@ -4,7 +4,13 @@
 # Usage:
 #   fm-notion.sh whoami
 #   fm-notion.sh query <actions|projects> [--limit N]   (filter JSON on stdin)
+#   fm-notion.sh ensure-schema [--dry-run]
 #   fm-notion.sh --help
+#
+# `ensure-schema` adds the board's missing Action Items properties and never
+# retypes, renames, or deletes one that exists; bin/fm-notion.py owns the
+# field list. Repo options are the projects cloned under $FM_HOME/projects
+# plus firstmate.
 #
 # This wrapper owns configuration; bin/fm-notion.py owns the wire format.
 # Credentials and database ids come from the environment, filling missing keys
@@ -32,7 +38,7 @@ ENGINE="$SCRIPT_DIR/fm-notion.py"
 . "$SCRIPT_DIR/fm-env-lib.sh"
 
 usage() {
-  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"
 }
 
 die_usage() {
@@ -71,6 +77,20 @@ shift
 case "$cmd" in
   whoami)
     exec python3 "$ENGINE" whoami "$@"
+    ;;
+  ensure-schema)
+    db=$(resolve_db actions)
+    [ -n "$db" ] || die_usage "no database id configured for 'actions'"
+    # Repo options are the registered projects plus firstmate itself.
+    repos=firstmate
+    if [ -d "$FM_HOME/projects" ]; then
+      for p in "$FM_HOME"/projects/*/; do
+        [ -d "$p" ] || continue
+        p=${p%/}
+        repos="$repos,${p##*/}"
+      done
+    fi
+    FM_NOTION_DB=$db FM_NOTION_REPOS=$repos exec python3 "$ENGINE" ensure-schema "$@"
     ;;
   query)
     [ "$#" -ge 1 ] || die_usage "query needs a database: actions or projects"

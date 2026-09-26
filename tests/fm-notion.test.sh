@@ -122,7 +122,42 @@ expect_code 2 "$rc" "unknown database name is usage"
 out=$(printf '%s' "$filter" | notion query actions --limit 0 2>&1); rc=$?
 expect_code 2 "$rc" "out-of-range limit is usage"
 
-# 10. An unreachable API is a network failure (1), not a usage error.
+# 10. ensure-schema is additive: a dry run writes nothing, a real run adds
+# only the missing fields, and a second run is a no-op.
+mkdir -p "$HOME_DIR/projects/alpha"
+out=$(notion ensure-schema --dry-run 2>&1); rc=$?
+expect_code 0 "$rc" "schema dry run succeeds"
+assert_contains "$out" "would add: Dev status" "dry run names the missing Dev status field"
+assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "dry run sends no write"
+out=$(notion ensure-schema 2>&1); rc=$?
+expect_code 0 "$rc" "schema apply succeeds"
+assert_contains "$out" "add: Needs you" "apply adds the Needs you flag"
+assert_grep '"Dev status": {"select": {"options": [{"name": "Queued"}' "$TMP/requests.log" "Dev status is a fixed option list"
+assert_grep '{"name": "alpha"}' "$TMP/requests.log" "Repo options come from the cloned projects"
+patches=$(grep -c '"method": "PATCH"' "$TMP/requests.log")
+out=$(notion ensure-schema 2>&1); rc=$?
+expect_code 0 "$rc" "second schema run succeeds"
+assert_contains "$out" "present: Dev status" "second run sees the field"
+assert_not_contains "$out" "add:" "second run adds nothing"
+assert_equals "$patches" "$(grep -c '"method": "PATCH"' "$TMP/requests.log")" "second run sends no write"
+
+# 11. A field of the wrong type is a conflict: reported, and nothing written.
+stop_fake
+python3 - "$TMP/world.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+world = json.load(open(path))
+world["databases"]["db-actions"]["properties"] = {"Ready": {"type": "rich_text", "rich_text": {}}}
+json.dump(world, open(path, "w"))
+PY
+start_fake
+BASE="http://127.0.0.1:$(cat "$TMP/port")/v1"
+out=$(notion ensure-schema 2>&1); rc=$?
+expect_code 1 "$rc" "a type conflict fails the schema run"
+assert_contains "$out" "conflict: Ready is rich_text, expected checkbox" "conflict is named"
+assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "a conflicting schema run writes nothing"
+
+# 12. An unreachable API is a network failure (1), not a usage error.
 stop_fake
 out=$(printf '%s' "$filter" | notion query actions 2>&1); rc=$?
 expect_code 1 "$rc" "unreachable Notion is a network failure"

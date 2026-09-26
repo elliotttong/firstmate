@@ -152,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
                         merged = dict(props.get(name, {}))
                         merged.update(spec)
                         merged.setdefault("name", name)
+                        kinds = [k for k in spec if k not in ("name", "type", "description")]
+                        if kinds:
+                            merged["type"] = kinds[0]
                         props[name] = merged
                 return self.reply(200, {"object": "database", "id": parts[1], "properties": props})
             if parts[2:] == ["query"] and self.command == "POST":
