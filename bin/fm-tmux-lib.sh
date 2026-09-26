@@ -142,14 +142,17 @@ fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
   cy=$(fm_tmux_composer_cursor_row "$target") || { printf 'unknown'; return 0; }
   case "$cy" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || { printf 'unknown'; return 0; }
-  # jcode's numbered prompt (`1>`) and right-hand row furniture make every
-  # jcode composer unreadable to the shared resolvers, which costs the guarded
-  # exit and relaunch paths entirely (bin/fm-composer-lib.sh owns the full
-  # rationale and both rewrites). Normalize the pane for a pane structurally
-  # identified as jcode, exactly as the Cursor reclassification below is gated
-  # on Cursor's own process identity, so no other harness's shape is touched.
+  # A pane structurally identified as jcode takes the shared jcode verdict,
+  # which normalizes jcode's numbered prompt and row furniture, reads the
+  # composer cursorlessly, and needs jcode's own composer report to agree
+  # before it says empty (bin/fm-composer-lib.sh, fm_composer_jcode_verdict).
+  # Gated on jcode's own process identity, exactly as the Cursor
+  # reclassification below is, so no other harness's shape is touched.
   if fm_tmux_pane_is_jcode "$target"; then
-    pane=$(fm_composer_jcode_normalize_screen <<< "$pane")
+    fm_composer_jcode_verdict "$(fm_tmux_composer_caps)" "$pane" \
+      "$("$(dirname -- "${BASH_SOURCE[0]}")/fm-jcode-composer-input.sh" \
+        "$(tmux display-message -p -t "$target" '#{pane_current_path}' 2>/dev/null)" 2>/dev/null)"
+    return 0
   fi
   verdict=$(fm_composer_classify_screen "$(fm_tmux_composer_caps)" "$pane" "$cy")
   if [ "$verdict" = need-identity ]; then
