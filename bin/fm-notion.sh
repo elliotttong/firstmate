@@ -121,8 +121,8 @@ case "$cmd" in
         exit 1
       fi
     fi
-    FM_NOTION_DB=$db FM_NOTION_STATE_DIR=$state_dir FM_NOTION_BACKLOG_LISTING=$listing \
-      python3 "$ENGINE" up "$@"
+    FM_NOTION_DB=$db FM_NOTION_STATE_DIR=$state_dir FM_NOTION_DATA_DIR="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
+      FM_NOTION_BACKLOG_LISTING=$listing python3 "$ENGINE" up "$@"
     exit $?
     ;;
   ensure-projects)

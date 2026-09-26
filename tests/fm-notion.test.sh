@@ -286,6 +286,27 @@ expect_code 0 "$rc" "a converged board reports cleanly"
 assert_contains "$out" "report only: 0 write(s) pending" "a converged board has nothing to write"
 assert_contains "$out" "orphan gone" "an orphan is still reported, never deleted"
 
+# 13b. The spec contract: a building task whose board row carries a design
+# handover that its brief never cites is reported, never silently accepted.
+stop_fake
+python3 - "$TMP/world.json" <<'PY'
+import json, sys
+world = json.load(open(sys.argv[1]))
+for page in world["databases"]["db-actions"]["pages"]:
+    if page["id"] == "pg-building":
+        page["properties"]["Design handover"] = {"type": "url", "url": "https://claude.ai/design/handover-1"}
+json.dump(world, open(sys.argv[1], "w"))
+PY
+start_fake
+BASE="http://127.0.0.1:$(cat "$TMP/port")/v1"
+mkdir -p "$HOME_DIR/data/building"
+printf '# Task\nBuild it without reading anything.\n' > "$HOME_DIR/data/building/brief.md"
+out=$(up 2>&1)
+assert_contains "$out" "spec building brief lacks its design handover" "a brief that skipped the handover is reported"
+printf '# Task\n### Design handover\nhttps://claude.ai/design/handover-1\n' > "$HOME_DIR/data/building/brief.md"
+out=$(up 2>&1)
+assert_not_contains "$out" "spec building" "a brief that cites the handover passes"
+
 # 14. ensure-projects adds the initiative fields, additions only, and rolls
 # Last worked up from the related Action Items' Last activity.
 stop_fake
