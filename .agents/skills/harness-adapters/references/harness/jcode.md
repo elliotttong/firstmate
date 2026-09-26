@@ -121,6 +121,12 @@ session. Any gap - debug control off, no session, two sessions for one
 directory, no connected client, a timeout - reads `unknown`, and a rendered
 `empty` without a structural `empty` is refused.
 
+Only the tmux and Herdr adapters identify a jcode pane. On cmux, orca, and
+zellij a jcode composer still reads `unknown`, so exit and relaunch refuse there
+rather than guess. Through Herdr, only a live mid-turn read (`unknown`) has been
+verified; the idle `empty` path is proven end to end on tmux and by the shared
+verdict's capture tests.
+
 Delivery is unaffected and still does not depend on this: `bin/fm-jcode-seed.sh`
 proves a brief landed from the daemon's own `is_processing`, which is stronger
 evidence than any composer read.
