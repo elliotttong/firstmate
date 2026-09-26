@@ -52,6 +52,7 @@ launch so the refusal cannot be bypassed by a raw harness argument.
 | per-task wiring | `state/<id>.jcode-bridge.pid` |
 | `fm-busy-lib.sh` source | `jcode-debug` |
 | `fm-composer-lib.sh` delivery guard | `FM_DELIVERY_JCODE_BUSY_REGEX_DEFAULT` |
+| `fm-composer-lib.sh` composer verdict | `fm_composer_jcode_verdict`, fed by `bin/fm-jcode-composer-input.sh` (see Composer) |
 | `fm-quota-choose.sh` family | `claude` |
 | `fm-harness.sh` detection | anchored `jcode` |
 | `fm-bootstrap.sh` effort set | `none minimal low medium high xhigh max` (swarm levels excluded) |
@@ -75,17 +76,64 @@ that do not apply elsewhere:
 
 ## Composer
 
-jcode numbers its composer prompt (`1>` empty, `1> typed`, `1<>` submitted), so
-Firstmate's leading-glyph resolvers do not anchor on it and its EMPTY composer
-classifies `pending` rather than `empty`.
+jcode numbers its composer prompt (`1>` empty, `1> typed`, `1<>` submitted) and
+draws furniture at the row's far right: a context meter and a private-use-area
+status glyph, both present on an empty composer and unchanged by typing.
 
-This is DELIBERATELY not worked around. Making the shared resolvers strip a turn
-index weakens the dead-shell rule for every harness, and it regressed
-`tests/fm-control-relaunch.test.sh` when tried. It is also unnecessary: a
-non-empty submit verdict is a delivery GUARD, not disproof - kimi already
-tolerates one - and `bin/fm-jcode-seed.sh` proves delivery from the daemon's own
-`is_processing` going true, which is strictly stronger evidence than a composer
-read. Do not "fix" the composer for jcode without a better reason than tidiness.
+Firstmate's leading-glyph resolvers cannot anchor on that shape, so a jcode
+composer classified `unknown` in every state until 2026-09-23. That is NOT
+merely untidy: `bin/fm-control.sh` refuses to type an exit command unless the
+composer is proven empty, and `fm-spawn.sh --relaunch` then refuses because the
+endpoint still reads alive, so a stalled jcode worker could not be stopped
+through the guarded path at all. Two were recoverable only by terminating the
+agent processes directly.
+
+A pane identified as jcode - by its foreground process on tmux, by Herdr's own
+`agent get` identity on Herdr - takes one shared verdict,
+`fm_composer_jcode_verdict`, and every other harness's read is untouched. It
+normalizes the row (furniture tail first, then the turn index rewritten to the
+shared agent prompt glyph), reads it CURSORLESSLY, and calls it `empty` only
+when jcode's own composer report agrees.
+
+The leading DIGITS are what make the normalization safe. A dead shell prompt is
+`>`, `$`, `%`, or `#` alone and is never `1>`, so a numbered prompt is positive
+proof of jcode's composer, while a bare prompt on a jcode pane still reads
+`unknown` and still refuses the lifecycle action - which is correct, because
+that is what an exited agent leaves behind. The shared resolvers are not
+changed; an earlier attempt that made them strip a turn index generally is what
+regressed `tests/fm-control-relaunch.test.sh`, and that remains the wrong fix.
+
+The render alone cannot prove `empty` (measured on v0.88.0,
+`tests/captures/jcode-v0.88.0`):
+
+- jcode keeps the terminal cursor on the composer line being edited, so a draft
+  whose first line is blank parks the cursor on a row that looks exactly like an
+  empty `2>`. A cursor-anchored read called that `empty`; the bottom-most-shape
+  read sees the text below it.
+- A draft of spaces renders exactly like an empty composer.
+- jcode's info box at the top of the screen leaves an unclosed border that made
+  the cursor-anchored read `unknown` for every empty composer after a reply.
+
+`bin/fm-jcode-composer-input.sh` supplies the second signal:
+`jcode debug -S <session> client:state` reports the composer text as `input`,
+found by the pane's working directory exactly as the busy bridge finds its
+session. Any gap - debug control off, no session, two sessions for one
+directory, no connected client, a timeout - reads `unknown`, and a rendered
+`empty` without a structural `empty` is refused.
+
+Only the tmux and Herdr adapters identify a jcode pane. On cmux, orca, and
+zellij a jcode composer still reads `unknown`, so exit and relaunch refuse there
+rather than guess. Through Herdr, only a live mid-turn read (`unknown`) has been
+verified; the idle `empty` path is proven end to end on tmux and by the shared
+verdict's capture tests.
+
+Delivery is unaffected and still does not depend on this: `bin/fm-jcode-seed.sh`
+proves a brief landed from the daemon's own `is_processing`, which is stronger
+evidence than any composer read.
+
+See `docs/verification/runtime-backends.md` ("2026-09-23 jcode ... numbered
+composer prompt" and "2026-09-26 jcode v0.88.0 composer verdict") for the live
+evidence and the refresh command.
 
 ## Firstmate owns dispatch
 

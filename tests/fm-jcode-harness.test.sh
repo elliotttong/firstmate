@@ -107,6 +107,179 @@ if printf '%s\0' "$JCODE_SPIN_ROW" | fm_busy_lines_match claude; then
 fi
 pass "jcode composer guard matches only in-flight rows, and only for jcode"
 
+# ------------------------------------------- numbered composer classification
+# jcode numbers its composer prompt (`1>`, `2>`, `1<>` once submitted) and
+# draws a context meter and a status glyph at the row's far right. Left
+# unrecognized, every jcode composer reads `unknown`, and bin/fm-control.sh
+# refuses to type an exit command unless the composer is PROVEN empty - which
+# is how two stalled jcode workers became unrecoverable through the guarded
+# path on 2026-09-23. These are the shapes captured live from jcode v0.86.0.
+JC_CAPS=$(printf 'styled=1\ncursor=1\nidentity=1\nrows=0\n')
+JC_METER='3.1k/1.0M ▱▱▱▱▱▱ 0%'
+JC_GLYPH=$(printf '\xf3\xb0\x96\x9f')  # U+F059F, jcode's right-hand status glyph
+
+jc_verdict() {  # <composer-row> -> verdict
+  local screen
+  screen=$(printf 'transcript row\n%s\n' "$1" | fm_composer_jcode_normalize_screen)
+  fm_composer_classify_screen "$JC_CAPS" "$screen" 1
+}
+
+[ "$(jc_verdict "1>                                   $JC_METER")" = empty ] \
+  || fail "an EMPTY jcode composer must classify empty, or the guarded exit path can never stop a jcode agent"
+[ "$(jc_verdict "1>                                   $JC_GLYPH")" = empty ] \
+  || fail "an empty jcode composer carrying only the status glyph must classify empty"
+[ "$(jc_verdict "12>")" = empty ] \
+  || fail "a multi-digit jcode turn index must classify empty: the index grows with the conversation"
+[ "$(jc_verdict "1<> already submitted")" = pending ] \
+  || fail "a submitted jcode row still carries text and must not read empty"
+pass "an empty jcode composer classifies empty rather than unknown"
+
+[ "$(jc_verdict "1> draft text here                   $JC_METER")" = pending ] \
+  || fail "a jcode composer holding typed text must classify pending so an exit cannot concatenate onto it"
+[ "$(jc_verdict "1> draft text here                   $JC_GLYPH")" = pending ] \
+  || fail "typed text must still read pending when the row ends in the status glyph"
+[ "$(jc_verdict "1> 3.1k/1.0M")" = pending ] \
+  || fail "meter-shaped text the operator actually TYPED is content: only the row's furniture tail is stripped"
+pass "a typed jcode composer classifies pending, and meter-like typed text is not eaten"
+
+# The dead-shell rule is the reason this is scoped to an identified jcode pane.
+# It must survive: an agent that exited leaves a real shell prompt behind, and
+# typing an exit command into that shell is exactly what the rule prevents.
+[ "$(jc_verdict "> ")" = unknown ] \
+  || fail "a bare shell prompt must still read unknown even on a jcode pane: the agent may have exited"
+[ "$(jc_verdict "$ ")" = unknown ] \
+  || fail "a dollar shell prompt must still read unknown"
+pass "the dead-shell rule survives for a bare prompt on a jcode pane"
+
+# The normalization must be a no-op on every other harness's shape, because a
+# jcode pane is identified structurally and this must not drift into a
+# fleet-wide rewrite if that gate is ever reached wrongly.
+for other in '❯ claude row' '› codex row' '⟩ muse row' '2 > 1 is true' '$ x'; do
+  jc_row=$other
+  fm_composer_jcode_row_normalize_var jc_row
+  [ "$jc_row" = "$other" ] \
+    || fail "jcode normalization must not touch another harness's row: [$other] became [$jc_row]"
+done
+pass "jcode composer normalization leaves every other harness's row byte-identical"
+
+# ------------------------------------ measured v0.88.0 screens, shared verdict
+# tests/captures/jcode-v0.88.0 holds raw tmux captures of a real jcode v0.88.0
+# pane (its README names each state). fm_composer_jcode_verdict is what every
+# backend returns for an identified jcode pane, so these pin the verdict to
+# measured bytes. A false `empty` types /quit onto somebody's draft; a false
+# `unknown` only costs a turn. Every assertion below leans that way.
+JC_CAP_DIR="$ROOT/tests/captures/jcode-v0.88.0"
+[ -d "$JC_CAP_DIR" ] || fail "missing $JC_CAP_DIR"
+
+jc_capture_verdicts() {  # <state> <structural> -> "<styled-cursor> <plain-cursorless>"
+  local state=$1 structural=$2 cy
+  cy=$(cut -d' ' -f2 "$JC_CAP_DIR/$state.cursor")
+  printf '%s %s' \
+    "$(fm_composer_jcode_verdict "$(printf 'styled=1\ncursor=1\nidentity=0\nrows=0')" \
+        "$(cat "$JC_CAP_DIR/$state.styled")" "$structural")" \
+    "$(fm_composer_jcode_verdict "$(printf 'styled=0\ncursor=0\nidentity=0\nrows=0')" \
+        "$(cat "$JC_CAP_DIR/$state.plain")" "$structural")"
+  : "$cy"  # the cursor row is deliberately ignored; see fm_composer_jcode_verdict
+}
+
+# A genuinely empty composer, fresh, after a reply (the case the cursor-anchored
+# read called `unknown` because of jcode's info box), and after a turn with the
+# status glyph, is `empty` only when jcode's own report agrees.
+for state in idle-empty post-response-empty busy4; do
+  [ "$(jc_capture_verdicts "$state" empty)" = "empty empty" ] \
+    || fail "measured empty jcode composer '$state' must read empty when jcode agrees: got $(jc_capture_verdicts "$state" empty)"
+  [ "$(jc_capture_verdicts "$state" unknown)" = "unknown unknown" ] \
+    || fail "measured empty jcode composer '$state' must NOT read empty without jcode's own report: got $(jc_capture_verdicts "$state" unknown)"
+  [ "$(jc_capture_verdicts "$state" pending)" = "pending pending" ] \
+    || fail "jcode reporting text under an empty-looking '$state' must read pending"
+done
+pass "a measured empty jcode composer reads empty only when the render and jcode's own report agree"
+
+# Every measured draft - including ones that look like a prompt glyph, a digit,
+# a shell glyph, a wrapped line, a real newline, and a blank FIRST line with the
+# cursor parked on it - must never read `empty`, whatever the structural read
+# claims, because the render already shows the text.
+for state in idle-typed wrap multiline-alt blankfirst-alt-top adv-agentglyph adv-digit adv-shellglyph; do
+  for structural in empty pending unknown; do
+    got=$(jc_capture_verdicts "$state" "$structural")
+    case "$got" in
+      *empty*) fail "measured jcode draft '$state' read empty (structural=$structural): $got" ;;
+    esac
+  done
+done
+pass "no measured jcode draft ever reads empty, even when the structural read is wrong"
+
+# A draft of spaces renders exactly like an empty composer; only jcode's report
+# can tell, and it does.
+[ "$(jc_capture_verdicts ws-spaces pending)" = "pending pending" ] \
+  || fail "a whitespace-only jcode draft must read pending when jcode reports it"
+pass "a whitespace-only jcode draft is caught by jcode's own report"
+
+# Mid-turn (`2…`) is never a composer the exit command may be typed into.
+for structural in empty pending unknown; do
+  case "$(jc_capture_verdicts busy2 "$structural")" in
+    *empty*) fail "a mid-turn jcode pane must never read empty (structural=$structural)" ;;
+  esac
+done
+pass "a mid-turn jcode pane never reads empty"
+
+# ------------------------------------------------ the structural composer read
+PROBE="$ROOT/bin/fm-jcode-composer-input.sh"
+JC_FAKE="$TMP_ROOT/fake-jcode"
+JC_WD="$TMP_ROOT/wd"
+mkdir -p "$JC_WD"
+JC_WD_REAL=$(cd "$JC_WD" && pwd -P)
+# The fake answers `debug sessions` and `debug -S <id> client:state` from files,
+# so each case controls exactly what the daemon claims.
+cat > "$JC_FAKE" <<'EOF'
+#!/usr/bin/env bash
+[ "${JCODE_DEBUG_CONTROL:-}" = 1 ] || { echo "debug control off" >&2; exit 1; }
+[ "$1" = debug ] || exit 1
+case "$2" in
+  sessions) cat "$FAKE_DIR/sessions" ;;
+  -S) [ "$4" = client:state ] || exit 1; cat "$FAKE_DIR/state.$3" 2>/dev/null || { echo "Error: no client" ; } ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$JC_FAKE"
+export FAKE_DIR="$TMP_ROOT/fake"
+mkdir -p "$FAKE_DIR"
+jc_probe() { FM_JCODE_BIN="$JC_FAKE" "$PROBE" "$JC_WD"; }
+jc_sessions() {  # <session-id>...
+  local id first=1
+  printf '['
+  for id in "$@"; do
+    [ "$first" = 1 ] || printf ','
+    first=0
+    printf '{"session_id":"%s","working_dir":"%s","status":"ready","is_processing":false}' "$id" "$JC_WD_REAL"
+  done
+  printf ']'
+}
+
+jc_sessions session_a > "$FAKE_DIR/sessions"
+printf '{"input":"","processing":false}' > "$FAKE_DIR/state.session_a"
+[ "$(jc_probe)" = empty ] || fail "an empty client input must read empty"
+printf '{"input":"   ","processing":false}' > "$FAKE_DIR/state.session_a"
+[ "$(jc_probe)" = pending ] || fail "whitespace in the client input is a draft and must read pending"
+printf '{"input":"\\nhidden","processing":false}' > "$FAKE_DIR/state.session_a"
+[ "$(jc_probe)" = pending ] || fail "a blank-first-line draft must read pending"
+pass "the structural read reports empty only for an empty input string"
+
+printf '{"processing":false}' > "$FAKE_DIR/state.session_a"
+[ "$(jc_probe)" = unknown ] || fail "a client state with no input field must read unknown"
+printf 'Error: Session does not have a connected TUI client' > "$FAKE_DIR/state.session_a"
+[ "$(jc_probe)" = unknown ] || fail "a session with no connected client must read unknown"
+printf '{"input":"","processing":false}' > "$FAKE_DIR/state.session_a"
+jc_sessions session_a session_b > "$FAKE_DIR/sessions"
+[ "$(jc_probe)" = unknown ] || fail "two sessions in one working directory must read unknown, never guess"
+printf '[]' > "$FAKE_DIR/sessions"
+[ "$(jc_probe)" = unknown ] || fail "no session for the working directory must read unknown"
+[ "$(FM_JCODE_BIN="$TMP_ROOT/absent" "$PROBE" "$JC_WD")" = unknown ] \
+  || fail "a missing jcode executable must read unknown"
+[ "$(FM_JCODE_BIN="$JC_FAKE" "$PROBE" "$TMP_ROOT/no-such-dir")" = unknown ] \
+  || fail "an unreadable working directory must read unknown"
+pass "every structural read the probe cannot prove reads unknown"
+
 # --------------------------------------------------------- quota and detection
 grep -qE "^[[:space:]]+jcode\)[[:space:]]+printf 'claude" "$ROOT/bin/fm-quota-axi-lib.sh" \
   || fail "jcode must share the claude quota family: it spends the same subscription windows"

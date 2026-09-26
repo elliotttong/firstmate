@@ -201,6 +201,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/harness-adapters/references/harness/jcode.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/harness-adapters/references/harness/kimi.md",
       "audience": "agent-runtime"
     },
@@ -413,6 +417,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "docs/supervision-protocols/jcode.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/supervision-protocols/omp.md",
       "audience": "agent-runtime"
     },
@@ -511,6 +519,10 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "tests/captures/jcode-v0.88.0/README.md",
+      "audience": "maintainer-verification"
     },
     {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",

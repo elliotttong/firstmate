@@ -3096,6 +3096,21 @@ fm_backend_herdr_composer_identity() {  # <target> -> "<agent>\t<status>"
   fm_backend_herdr_agent_identity_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"
 }
 
+# fm_backend_herdr_jcode_cwd: print the pane's foreground working directory and
+# succeed only when herdr's native identity probe names the pane's agent as
+# jcode (verified on herdr 0.8.2 with jcode v0.88.0: `agent get` reports
+# `"agent":"jcode"` and the worktree as `foreground_cwd`). Anything else,
+# including a failed probe, is not jcode for composer purposes.
+fm_backend_herdr_jcode_cwd() {  # <target> -> <cwd>
+  local out
+  fm_backend_herdr_parse_target "$1" || return 1
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) || return 1
+  out=$(printf '%s' "$out" | jq -r '
+    .result.agent // {} | select(.agent == "jcode") | .foreground_cwd // empty' 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
 # fm_backend_herdr_composer_state: thin adapter - capture plus capabilities
 # in, shared verdict out. The ANSI capture is preferred (styled=1 lets the
 # shared classifier strip ghost/placeholder text); when it fails on an older
@@ -3105,7 +3120,7 @@ fm_backend_herdr_composer_identity() {  # <target> -> "<agent>\t<status>"
 # pair below every other candidate), preserving this adapter's original
 # consult-only-when-needed behavior.
 fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
-  local target=$1 cap caps verdict identity
+  local target=$1 cap caps verdict identity jcode_cwd
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   if cap=$(fm_backend_herdr_capture_ansi "$target" "$FM_COMPOSER_CAPTURE_LINES" 2>/dev/null); then
     caps=$(printf 'styled=1\ncursor=0\nidentity=1\nrows=%s' "$FM_COMPOSER_CAPTURE_LINES")
@@ -3113,6 +3128,15 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
     caps=$(printf 'styled=0\ncursor=0\nidentity=1\nrows=%s' "$FM_COMPOSER_CAPTURE_LINES")
   else
     printf 'unknown'
+    return 0
+  fi
+  # A pane herdr's native identity probe names as jcode takes the shared jcode
+  # verdict (bin/fm-composer-lib.sh, fm_composer_jcode_verdict), fed jcode's
+  # own composer report for the pane's foreground working directory. Gated on
+  # that identity, so no other harness's read changes.
+  if jcode_cwd=$(fm_backend_herdr_jcode_cwd "$target"); then
+    fm_composer_jcode_verdict "$caps" "$cap" \
+      "$("$FM_BACKEND_HERDR_ROOT/bin/fm-jcode-composer-input.sh" "$jcode_cwd" 2>/dev/null)"
     return 0
   fi
   verdict=$(fm_composer_classify_screen "$caps" "$cap")

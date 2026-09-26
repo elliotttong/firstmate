@@ -689,6 +689,68 @@ Cursor is deliberately outside this cursor-anchored empty-composer matrix becaus
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which is the capability the zellij composer classifier reads.
 
+### 2026-09-26 jcode v0.88.0 composer verdict
+
+Verified on 2026-09-26 on Linux x86_64 against jcode v0.88.0 (ee4cd3db3), tmux 3.6, and herdr 0.8.2.
+Raw plain and styled captures of every state below are committed in `tests/captures/jcode-v0.88.0`.
+
+The prompt row is the turn index: `N>` while idle and `N…` (U+2026) while a turn runs.
+Typing moves the context meter up a row and adds a hint row above the prompt.
+jcode keeps the terminal cursor on the composer line being edited.
+
+The 2026-09-23 normalization alone was not enough to prove `empty` safely:
+
+| capture | cursor-anchored read | cursorless read |
+|---|---|---|
+| empty composer after a reply (`post-response-empty`) | `unknown` | `empty` |
+| draft whose first line is blank, cursor on that line (`blankfirst-alt-top`) | `empty` (false) | `pending` |
+| draft of four spaces (`ws-spaces`) | `unknown` | `empty` (false) |
+
+`JCODE_DEBUG_CONTROL=1 jcode debug -S <session> client:state` reports the composer text directly, for example `{"input":"\nhidden draft on line two",...}` for the blank-first draft and `{"input":"    ",...}` for the spaces draft.
+`fm_composer_jcode_verdict` therefore reads jcode cursorlessly and returns `empty` only when that structural read, via `bin/fm-jcode-composer-input.sh`, also reports an empty input.
+Herdr's `agent get` reports `"agent":"jcode"` and the worktree as `foreground_cwd` for a jcode pane, which is the Herdr adapter's identity gate and session key.
+
+End to end on a throwaway task in a scratch firstmate home and an isolated tmux server:
+
+```text
+fm-control.sh jxe2e exit   (draft `captain half-typed draft`)      -> refused: composer visibly holds pending text
+fm-control.sh jxe2e exit   (blank first line, cursor on it)        -> refused: composer visibly holds pending text
+fm-control.sh jxe2e exit   (composer cleared)                      -> stopped jxe2e harness=jcode backend=tmux ...
+fm-control.sh jxe2e relaunch --note-file ...   (agent stopped)     -> relaunched jxe2e harness=jcode from=jcode ...
+fm-control.sh jxe2e relaunch --note-file ...   (agent alive, idle) -> relaunched ...; old jcode pid gone, new pid in the same worktree
+```
+
+A read-only Herdr read of a live mid-turn jcode pane returned `unknown`.
+The portable regressions are in `tests/fm-jcode-harness.test.sh`.
+
+### 2026-09-23 jcode v0.86.0/v0.87.1 numbered composer prompt
+
+Verified on 2026-09-23 on Linux x86_64 against jcode v0.86.0 (e589cbe5a) and v0.87.1 (944f747e9) in tmux panes.
+jcode numbers its composer prompt rather than drawing a prompt glyph: the row reads `1>`, `2>`, `3>` as the turn index advances, and `1<>` once a turn is submitted.
+A bare `>` is a SHELL prompt glyph, so the dead-shell rule correctly refused to read that row as an agent composer and every jcode pane classified `unknown` at every pane width measured (40, 50, 60, 80, 120, and 200 columns), whether the composer was empty or held typed text.
+jcode also draws row furniture at the far right of that same row: a context meter (`3.1k/1.0M ▱▱▱▱▱▱ 0%`) and a private-use-area status glyph (U+F059F), both present on an empty composer and unchanged by typing.
+
+That verdict is not free.
+`bin/fm-control.sh` refuses to type an exit command unless the composer is proven empty, and `bin/fm-spawn.sh --relaunch` then refuses as well because the endpoint still reads alive, so a jcode agent could not be stopped through the guarded path at all; two stalled workers on this date were recoverable only by terminating the agent processes directly.
+
+The classifier now normalizes a jcode composer row - furniture tail first, then the turn index rewritten to the shared agent prompt glyph - for a pane whose foreground process is structurally identified as jcode, mirroring the Cursor process-identity gate in `bin/fm-tmux-lib.sh`.
+The leading digits are what make this safe: a dead shell prompt is `>`, `$`, `%`, or `#` alone and is never `1>`, so a numbered prompt is positive proof of jcode's composer, and a bare prompt on a jcode pane still classifies `unknown`.
+
+Live verification through the matrix guard, with jcode added to its harness list:
+
+```sh
+FM_COMPOSER_MATRIX_LIVE=1 tests/fm-composer-matrix-live-e2e.test.sh
+```
+
+```text
+ok - jcode (jcode v0.87.1 (944f747e9)): real idle composer classifies empty
+ok - jcode (jcode v0.87.1 (944f747e9)): the same idle pane read cursorless is not pending (verdict: unknown)
+```
+
+Direct live reads of `fm_tmux_composer_state` against a real jcode pane on the same date returned `empty` for an empty composer and `pending` after typing, at 40, 60, and 200 columns.
+Portable regressions in `tests/fm-jcode-harness.test.sh` pin the captured shapes, the surviving dead-shell rule, and that the normalization leaves every other harness's row byte-identical.
+The `pi` failure visible in that guard's run on this machine is an unrelated first-launch folder-trust dialog and reproduces on an unmodified checkout.
+
 ### 2026-09-20 claude 2.1.236 statusLine footer through Herdr
 
 Verified on 2026-09-20 on macOS arm64 (Darwin 25.6.0) against Claude Code 2.1.236 running as Firstmate workers in Herdr 0.8.0 panes, read through Herdr's ANSI capture with its exact capability descriptor (`styled=1`, `cursor=0`, `identity=1`, `rows=20`).

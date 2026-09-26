@@ -79,9 +79,19 @@ harness_version() {  # <binary>
 
 check_harness_idle_empty() {  # <name> <launch-cmd...>
   local name=$1 win="hx-$1" verdict='' i=0 budget=${FM_COMPOSER_MATRIX_LIVE_POLLS:-45} version dismissed=0 startup_screen
+  local launch_dir=$ROOT
   shift
   version=$(harness_version "$1")
-  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$ROOT" -- "$@" \
+  # jcode's composer verdict needs jcode's own report of the composer, found by
+  # the pane's working directory (bin/fm-jcode-composer-input.sh). A second
+  # jcode session in the same directory - an agent running this very guard
+  # from the repo root - is correctly ambiguous there, so jcode gets a private
+  # directory of its own, exactly as every spawned worker gets its worktree.
+  if [ "$name" = jcode ]; then
+    launch_dir="$SHIM_DIR/jcode-wd"
+    mkdir -p "$launch_dir"
+  fi
+  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$launch_dir" -- "$@" \
     || fail "$name ($version): could not launch in the isolated tmux server"
   while [ "$i" -lt "$budget" ]; do
     verdict=$(fm_tmux_composer_state "$SESSION:$win")
@@ -160,7 +170,11 @@ check_harness_idle_cursorless() {  # <name> <version> <target>
 }
 
 # --- 1. Every installed verified harness must reach a proven-empty composer --
-for h in claude codex opencode pi grok kimi muse; do
+# jcode is included because its numbered prompt (`1>`) and right-hand row
+# furniture are exactly the vendor-rendered signals this guard exists to prove:
+# unrecognized, they made every jcode composer read `unknown`, which stopped
+# the guarded exit and relaunch paths from ever acting on a jcode worker.
+for h in claude codex opencode pi grok kimi muse jcode; do
   if command -v "$h" >/dev/null 2>&1; then
     check_harness_idle_empty "$h" "$h"
   else

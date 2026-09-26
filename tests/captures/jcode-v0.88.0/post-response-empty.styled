@@ -1,0 +1,30 @@
+
+                                                            [2m[38;2;70;70;80m╭──────────────────────────────────────╮
+[0m [1m[38;2;190;210;235mjcode[0m[38;2;80;80;80m · client[39m                                             [2m[38;2;70;70;80m│[0;1m[38;2;180;180;190mOpus 5.5[0m [38;2;255;200;100m(med)[39m                        [2m[38;2;70;70;80m│
+[0m [38;2;80;80;80mserver: Desert 🌵 · v0.88.0[39m                                [2m[38;2;70;70;80m│[0m[38;2;140;180;255mclaude[38;2;80;80;90m · [38;2;140;140;150m🔐 OAuth[39m                     [2m[38;2;70;70;80m│
+[0m [38;2;80;80;80mclient: Tigress 🐅 🌐 · v0.88.0[39m                            [2m[38;2;70;70;80m│[0m[38;2;140;140;150m0 sessions · tigress[39m                  [2m[38;2;70;70;80m│
+[0m [38;2;80;80;80m/model to switch · oauth:claude · [1m[38;2;255;150;200mClaude 5.5 Opus[0m          [2m[38;2;70;70;80m│[0m[38;2;140;140;150mContext [1m[38;2;100;200;100m16k/1000k [0m[38;2;50;50;60m▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱[2m[38;2;70;70;80m│
+[0m [38;2;80;80;80m/login to add provider[39m                                     [2m[38;2;70;70;80m│[0;1m[38;2;180;180;190mKV cache: [0m[38;2;140;140;150myield [1m[38;2;110;210;140m100%[0m[38;2;80;80;90m · [38;2;140;140;150mlast [1m[38;2;110;210;140m97%[0m[38;2;80;80;90m · [38;2;140;140;150msess[2m[38;2;70;70;80m│
+[0m [38;2;100;200;100m●[38;2;80;80;80m anthropic(oauth)[39m                                         [2m[38;2;70;70;80m╰──────────────────────────────────────╯
+[0m [38;2;80;80;80mmcp: notion (45 tools), posthog (1 tools), socialbu (44 tools), supabase (20 tools) +2 more[39m       [38;2;136;148;172m│
+[39m [38;2;80;80;80mskills: /kun /no-mistakes[39m                                                                         [38;2;136;148;172m│
+[39m [38;2;80;80;80m/tmp/fm-jcodeexit/m2 (main)[39m                                                                       [38;2;136;148;172m│
+[39m                                                                                                   [38;2;136;148;172m│
+[39m [38;2;197;133;80m[48;2;35;40;50m1[38;2;138;180;248m› [38;2;245;245;255mfirst line[39m[49m                                                                                    [38;2;138;180;248m│[38;2;136;148;172m│
+[39m                                                                                                   [38;2;136;148;172m│
+[39m [3m[38;2;100;100;100m“First line“ is ambiguous—I should check the working directory to figure out what they’re [0m        [38;2;136;148;172m│
+[39m [3m[38;2;100;100;100mreferring to.[0m                                                                                     [38;2;136;148;172m│
+[39m [38;2;220;100;100m  ✗ [38;2;120;120;120mbash[38;2;80;80;80m · [38;2;120;120;120mInspect working directory for context[38;2;80;80;80m · exit 128 · [38;2;118;118;118m41 tok[39m [38;2;80;80;80m[Alt][39m [38;2;80;80;80m[⇧][39m [38;2;80;80;80m[S][39m                [38;2;136;148;172m│
+[39m                                                                                                   [38;2;136;148;172m│
+[39m [3m[38;2;100;100;100mThe repo is empty with no commits, and “first line” reads like a test or incomplete message [0m      [38;2;136;148;172m│
+[39m [3m[38;2;100;100;100mrather than a real request, so I should just ask for clarification.[0m                               [38;2;136;148;172m│
+[39m                                                                                                   [38;2;136;148;172m│
+[39m [38;2;200;200;195mYour message just says “first line”, so it may have been cut off before the rest came through. I [39m [38;2;136;148;172m│
+[39m [38;2;200;200;195mchecked the working directory ([38;2;180;180;180m[48;2;45;45;45m/tmp/fm-jcodeexit/m2[38;2;200;200;195m[49m). It’s an empty git repo on [38;2;180;180;180m[48;2;45;45;45mmain[38;2;200;200;195m[49m with no [39m     [38;2;136;148;172m│
+[39m [38;2;200;200;195mfiles and no commits.[39m                                                                             [38;2;136;148;172m│
+[39m                                                                                                   [38;2;136;148;172m│
+[39m [38;2;200;200;195mWhat would you like me to do? For example, I could create a file with “first line” as its [39m        [38;2;136;148;172m│
+[39m [38;2;200;200;195mcontent, or I could wait for the rest of your message.[39m                                            [38;2;136;148;172m│
+[39m   [38;2;80;80;80m6.9s · 90.8 tps · ↑163 ↓150[39m                                                                     [38;2;136;148;172m╵
+[38;2;80;80;80m💡 Ctrl+G to bookmark your scroll position - press again to teleport back[39m
+[38;2;255;80;80m2[38;2;138;180;248m> [39m                                                                                                [38;2;140;180;255m󰖟
