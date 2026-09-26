@@ -5,7 +5,16 @@
 #   fm-notion.sh whoami
 #   fm-notion.sh query <actions|projects> [--limit N]   (filter JSON on stdin)
 #   fm-notion.sh ensure-schema [--dry-run]
+#   fm-notion.sh down
 #   fm-notion.sh --help
+#
+# `down` prints what the captain has put on the board for firstmate, one line
+# each: `ready <page-id> <title>` for a row in firstmate's lane (Lane=Claude)
+# with Ready ticked and no Task ID yet, and `answer <task-id> <page-id>
+# <answer>` for a row flagged Needs you that now carries an Answer. Any other
+# Lane, including empty, is not firstmate's. A board field can raise work or
+# carry an answer; it never grants merge, destructive, irreversible, or
+# security-sensitive authority.
 #
 # `ensure-schema` adds the board's missing Action Items properties and never
 # retypes, renames, or deletes one that exists; bin/fm-notion.py owns the
@@ -77,6 +86,11 @@ shift
 case "$cmd" in
   whoami)
     exec python3 "$ENGINE" whoami "$@"
+    ;;
+  down)
+    db=$(resolve_db actions)
+    [ -n "$db" ] || die_usage "no database id configured for 'actions'"
+    FM_NOTION_DB=$db exec python3 "$ENGINE" down "$@"
     ;;
   ensure-schema)
     db=$(resolve_db actions)

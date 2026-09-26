@@ -301,7 +301,63 @@ def command_ensure_schema(args):
     return 0
 
 
+# Firstmate's lane on the board. Lane is a safety field: every other value,
+# including an empty one and "Both", is not firstmate's, so a personal item
+# can never be picked up by accident.
+FIRSTMATE_LANE = "Claude"
+
+
+def one_line(text, limit=160):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def command_down(args):
+    """down: print what the captain has put on the board for firstmate.
+
+    Two narrow reads of Action Items, never a whole-database fetch:
+      ready  <page-id> <title>          in firstmate's lane, Ready ticked, and
+                                        not yet taken (no Task ID)
+      answer <task-id> <page-id> <answer>
+                                        a row flagged Needs you that now carries
+                                        an Answer
+    A field can raise work or carry an answer; it never grants merge,
+    destructive, irreversible or security-sensitive authority.
+    """
+    if args:
+        die("down takes no arguments", 2)
+    database = database_id()
+    limit = env_int("FM_NOTION_MAX_ROWS", 200, 1, 2000)
+    ready_filter = {"and": [
+        {"property": "Lane", "select": {"equals": FIRSTMATE_LANE}},
+        {"property": "Ready", "checkbox": {"equals": True}},
+        {"property": "Task ID", "rich_text": {"is_empty": True}},
+    ]}
+    answer_filter = {"and": [
+        {"property": "Needs you", "checkbox": {"equals": True}},
+        {"property": "Answer", "rich_text": {"is_not_empty": True}},
+    ]}
+    rows, truncated = query(database, {"filter": ready_filter}, limit)
+    for page in rows:
+        simple = simplify_page(page)
+        title = next((plain_text(p.get("title")) for p in (page.get("properties") or {}).values()
+                      if p.get("type") == "title"), "")
+        sys.stdout.write("ready %s %s\n" % (simple["id"], one_line(title)))
+    if truncated:
+        sys.stderr.write("fm-notion: ready read stopped at %d rows\n" % limit)
+    rows, truncated = query(database, {"filter": answer_filter}, limit)
+    for page in rows:
+        props = simplify_page(page)["props"]
+        task = props.get("Task ID") or "-"
+        sys.stdout.write("answer %s %s %s\n" % (one_line(task, 64).replace(" ", "_"), page.get("id"),
+                                                 one_line(props.get("Answer"))))
+    if truncated:
+        sys.stderr.write("fm-notion: answer read stopped at %d rows\n" % limit)
+    return 0
+
+
 COMMANDS = {
+    "down": command_down,
     "ensure-schema": command_ensure_schema,
     "query": command_query,
     "whoami": command_whoami,
