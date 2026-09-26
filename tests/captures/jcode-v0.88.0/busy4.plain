@@ -1,0 +1,40 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+ jcode · client
+ server: Desert 🌵 · v0.88.0
+ client: Calf 🐮 🌐 · v0.88.0
+ /model to switch · oauth:claude · Claude 5.5 Opus
+ /login to add provider
+ ● anthropic(oauth)
+ mcp: notion (45 tools), posthog (1 tools), socialbu (44 tools), supabase (20 tools) +2 more
+ skills: /kun /no-mistakes
+ /tmp/fm-jcodeexit/m (main)
+
+ 1› Think carefully, then reply with just the number of primes below 200.                                              │
+
+ Counting primes: 25 below 100, plus 21 between 100 and 200, giving 46 total below 200.
+                                                                                                         Claude · OAuth
+ 46                                                                                                     Opus 5.5 medium
+   5.9s · 28.1 tps · ↑299 ↓88                                                                    …/fm-jcodeexit/m  main
+                                                                                                     16k/1.0M ▱▱▱▱▱▱ 2%
+2>                                                                                                                     󰖟
+
+
+
+
+
+
+
+
+
