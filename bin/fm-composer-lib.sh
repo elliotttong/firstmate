@@ -625,6 +625,48 @@ fm_composer_jcode_normalize_screen() {
   done
 }
 
+# fm_composer_jcode_verdict: the ONE jcode composer verdict every backend
+# adapter returns once it has structurally identified the pane as jcode.
+#   <caps>       the adapter's capability descriptor, unchanged.
+#   <screen>     the adapter's captured screen, unnormalized.
+#   <structural> the verdict bin/fm-jcode-composer-input.sh printed for the
+#                pane's jcode session: empty | pending | unknown.
+#
+# Two measured jcode v0.88.0 facts (tests/captures/jcode-v0.88.0) shape it:
+#
+# The read is CURSORLESS even where the adapter has a cursor row. jcode keeps
+# its terminal cursor on whichever composer line is being edited, so a draft
+# whose FIRST line is blank (`2>` then the text one row down) puts the cursor
+# on a row that looks exactly like an empty composer: the cursor-anchored read
+# answered `empty` for it, while the bottom-most-shape read sees the text below
+# and answers `pending`. jcode's own info box, drawn at the top of the screen,
+# also leaves an unclosed border above the cursor, so the cursor-anchored read
+# answered `unknown` for every genuinely empty composer after a reply.
+#
+# The render alone never proves `empty`. A draft of spaces renders exactly like
+# an empty composer, and a draft of blank lines can scroll its text out of the
+# captured rows. jcode reports its composer text directly, so `empty` needs the
+# render AND that structural read to agree; either one alone refuses. A
+# structural read that saw text downgrades a rendered `empty` to `pending`;
+# one that could not answer downgrades it to `unknown`. Every other rendered
+# verdict is returned as it is, so this can only ever move toward refusing.
+fm_composer_jcode_verdict() {  # <caps> <screen> <structural>
+  local caps=$1 screen=$2 structural=${3:-unknown} rendered
+  screen=$(printf '%s\n' "$screen" | fm_composer_jcode_normalize_screen)
+  rendered=$(fm_composer_classify_screen "$caps" "$screen" '')
+  # The identity follow-up belongs to the pi shape, and this pane is jcode.
+  [ "$rendered" != need-identity ] || rendered=unknown
+  if [ "$rendered" != empty ]; then
+    printf '%s' "$rendered"
+    return 0
+  fi
+  case "$structural" in
+    empty) printf 'empty' ;;
+    pending) printf 'pending' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
 # The ONE fleet-wide idle-placeholder set: composer text a harness renders in
 # an EMPTY composer that a plain capture cannot tell from typed text. Grok's
 # bordered placeholder and opencode's left-bar hint (which uses either three
