@@ -79,9 +79,19 @@ harness_version() {  # <binary>
 
 check_harness_idle_empty() {  # <name> <launch-cmd...>
   local name=$1 win="hx-$1" verdict='' i=0 budget=${FM_COMPOSER_MATRIX_LIVE_POLLS:-45} version dismissed=0 startup_screen
+  local launch_dir=$ROOT
   shift
   version=$(harness_version "$1")
-  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$ROOT" -- "$@" \
+  # jcode's composer verdict needs jcode's own report of the composer, found by
+  # the pane's working directory (bin/fm-jcode-composer-input.sh). A second
+  # jcode session in the same directory - an agent running this very guard
+  # from the repo root - is correctly ambiguous there, so jcode gets a private
+  # directory of its own, exactly as every spawned worker gets its worktree.
+  if [ "$name" = jcode ]; then
+    launch_dir="$SHIM_DIR/jcode-wd"
+    mkdir -p "$launch_dir"
+  fi
+  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$launch_dir" -- "$@" \
     || fail "$name ($version): could not launch in the isolated tmux server"
   while [ "$i" -lt "$budget" ]; do
     verdict=$(fm_tmux_composer_state "$SESSION:$win")
