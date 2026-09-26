@@ -52,7 +52,7 @@ launch so the refusal cannot be bypassed by a raw harness argument.
 | per-task wiring | `state/<id>.jcode-bridge.pid` |
 | `fm-busy-lib.sh` source | `jcode-debug` |
 | `fm-composer-lib.sh` delivery guard | `FM_DELIVERY_JCODE_BUSY_REGEX_DEFAULT` |
-| `fm-composer-lib.sh` composer shape | `fm_composer_jcode_normalize_screen` (see Composer) |
+| `fm-composer-lib.sh` composer verdict | `fm_composer_jcode_verdict`, fed by `bin/fm-jcode-composer-input.sh` (see Composer) |
 | `fm-quota-choose.sh` family | `claude` |
 | `fm-harness.sh` detection | anchored `jcode` |
 | `fm-bootstrap.sh` effort set | `none minimal low medium high xhigh max` (swarm levels excluded) |
@@ -88,26 +88,46 @@ endpoint still reads alive, so a stalled jcode worker could not be stopped
 through the guarded path at all. Two were recoverable only by terminating the
 agent processes directly.
 
-The row is therefore normalized before classification - furniture tail first,
-then the turn index rewritten to the shared agent prompt glyph - and ONLY for a
-pane whose foreground process is structurally identified as jcode, mirroring
-the Cursor process-identity gate. The shared resolvers are untouched, so no
-other harness's dead-shell rule is weakened; an earlier attempt that made them
-strip a turn index generally is what regressed
-`tests/fm-control-relaunch.test.sh`, and that remains the wrong fix.
+A pane identified as jcode - by its foreground process on tmux, by Herdr's own
+`agent get` identity on Herdr - takes one shared verdict,
+`fm_composer_jcode_verdict`, and every other harness's read is untouched. It
+normalizes the row (furniture tail first, then the turn index rewritten to the
+shared agent prompt glyph), reads it CURSORLESSLY, and calls it `empty` only
+when jcode's own composer report agrees.
 
-The leading DIGITS are what make this safe. A dead shell prompt is `>`, `$`,
-`%`, or `#` alone and is never `1>`, so a numbered prompt is positive proof of
-jcode's composer, while a bare prompt on a jcode pane still reads `unknown` and
-still refuses the lifecycle action - which is correct, because that is what an
-exited agent leaves behind.
+The leading DIGITS are what make the normalization safe. A dead shell prompt is
+`>`, `$`, `%`, or `#` alone and is never `1>`, so a numbered prompt is positive
+proof of jcode's composer, while a bare prompt on a jcode pane still reads
+`unknown` and still refuses the lifecycle action - which is correct, because
+that is what an exited agent leaves behind. The shared resolvers are not
+changed; an earlier attempt that made them strip a turn index generally is what
+regressed `tests/fm-control-relaunch.test.sh`, and that remains the wrong fix.
+
+The render alone cannot prove `empty` (measured on v0.88.0,
+`tests/captures/jcode-v0.88.0`):
+
+- jcode keeps the terminal cursor on the composer line being edited, so a draft
+  whose first line is blank parks the cursor on a row that looks exactly like an
+  empty `2>`. A cursor-anchored read called that `empty`; the bottom-most-shape
+  read sees the text below it.
+- A draft of spaces renders exactly like an empty composer.
+- jcode's info box at the top of the screen leaves an unclosed border that made
+  the cursor-anchored read `unknown` for every empty composer after a reply.
+
+`bin/fm-jcode-composer-input.sh` supplies the second signal:
+`jcode debug -S <session> client:state` reports the composer text as `input`,
+found by the pane's working directory exactly as the busy bridge finds its
+session. Any gap - debug control off, no session, two sessions for one
+directory, no connected client, a timeout - reads `unknown`, and a rendered
+`empty` without a structural `empty` is refused.
 
 Delivery is unaffected and still does not depend on this: `bin/fm-jcode-seed.sh`
 proves a brief landed from the daemon's own `is_processing`, which is stronger
 evidence than any composer read.
 
 See `docs/verification/runtime-backends.md` ("2026-09-23 jcode ... numbered
-composer prompt") for the live evidence and the refresh command.
+composer prompt" and "2026-09-26 jcode v0.88.0 composer verdict") for the live
+evidence and the refresh command.
 
 ## Firstmate owns dispatch
 

@@ -521,6 +521,10 @@
       "audience": "public-product"
     },
     {
+      "path": "tests/captures/jcode-v0.88.0/README.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/captures/no-mistakes-v1.70.1/README.md",
       "audience": "maintainer-verification"
     }
