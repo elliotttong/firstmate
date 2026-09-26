@@ -195,7 +195,94 @@ for other in Someday dispatched dentist Shared Unlabelled Waiting; do
 done
 assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "down is read-only"
 
-# 13. An unreachable API is a network failure (1), not a usage error.
+# 13. up reconciles the board with firstmate's records: report-only by
+# default, bounded writes with --apply, drift reported and never resolved.
+stop_fake
+python3 - "$TMP/world.json" <<'PY'
+import json, sys
+def text(s):
+    return [{"plain_text": s}] if s else []
+def row(pid, task, dev, checked, extra=None):
+    props = {
+        "Action Item": {"type": "title", "title": text(task)},
+        "Task ID": {"type": "rich_text", "rich_text": text(task)},
+        "Dev status": {"type": "select", "select": {"name": dev} if dev else None},
+        "Kind": {"type": "select", "select": {"name": "ship"}},
+        "Repo": {"type": "select", "select": {"name": "alpha"}},
+        "Needs you": {"type": "checkbox", "checkbox": False},
+        "Question": {"type": "rich_text", "rich_text": []},
+        "PR": {"type": "url", "url": None},
+        "Worker": {"type": "rich_text", "rich_text": []},
+        "Last checked": {"type": "date", "date": {"start": checked} if checked else None},
+        "Status": {"type": "select", "select": {"name": "Next Up"}},
+    }
+    props.update(extra or {})
+    return {"id": pid, "url": "https://notion.so/" + pid, "properties": props}
+fresh = "2026-09-26T11:00:00.000+00:00"
+world = {"databases": {"db-actions": {"properties": {}, "pages": [
+    row("pg-building", "building", "Queued", fresh),
+    row("pg-synced", "synced", "Queued", fresh),
+    row("pg-old", "oldcheck", "Queued", "2026-09-20T00:00:00.000+00:00"),
+    row("pg-design", "designing", "Needs design", fresh),
+    row("pg-orphan", "gone", "Building", fresh),
+]}}}
+json.dump(world, open(sys.argv[1], "w"))
+PY
+cat > "$TMP/listing.toon" <<'EOF'
+count: 7
+tasks[7]{id,state,kind,repo,title,hold_kind,hold_reason}:
+  building,in_flight,ship,alpha,Build the thing,-,-
+  synced,queued,ship,alpha,Already right,-,-
+  oldcheck,queued,ship,alpha,Nothing changed,-,-
+  designing,queued,ship,alpha,Needs a design pass,-,-
+  fresh,queued,scout,alpha,"A brand new, \"quoted\" item",-,-
+  askme,queued,task,-,Pick a colour,captain,"Blue or green? \"Blue\" is the default"
+  ghost,in_flight,ship,alpha,Worker died long ago,-,-
+EOF
+mkdir -p "$HOME_DIR/state"
+printf 'kind=ship\nharness=claude\npr=https://github.com/o/r/pull/7\n' > "$HOME_DIR/state/building.meta"
+printf 'working [at=1]: started\n' > "$HOME_DIR/state/building.status"
+touch -d '2026-09-26 10:00' "$HOME_DIR/state/building.status" "$HOME_DIR/state/building.meta"
+start_fake
+BASE="http://127.0.0.1:$(cat "$TMP/port")/v1"
+up() {
+  FM_NOTION_NOW=2026-09-26T12:00:00Z FM_NOTION_BACKLOG_LISTING="$TMP/listing.toon" notion up "$@"
+}
+out=$(up 2>&1); rc=$?
+expect_code 0 "$rc" "report-only up succeeds"
+assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "report-only up sends no update"
+assert_no_grep '"path": "/v1/pages"' "$TMP/requests.log" "report-only up creates nothing"
+assert_contains "$out" "orphan gone pg-orphan" "a board row with no local record is an orphan"
+assert_contains "$out" "stale ghost no live record" "an in-flight item with no record is stale"
+assert_contains "$out" "update building Dev status: Queued -> Building" "an in-flight task moves to Building"
+assert_contains "$out" "update building PR: - -> https://github.com/o/r/pull/7" "the PR link comes from the task record"
+assert_contains "$out" "update building Worker: - -> claude" "the worker comes from the task record"
+assert_contains "$out" "refresh oldcheck" "an old Last checked is refreshed even with no change"
+assert_contains "$out" 'create fresh Queued A brand new, "quoted" item' "a new backlog item is created with its title"
+assert_contains "$out" "create askme Queued Pick a colour" "a captain-held item is created"
+assert_not_contains "$out" "synced" "a row already in line and freshly checked is left alone"
+assert_not_contains "$out" "designing" "a hand-set design stage is not pulled back to Queued"
+assert_contains "$out" "report only: 5 write(s) pending" "the report counts the pending writes"
+[ "$(printf '%s\n' "$out" | grep -n '^orphan' | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n '^create' | head -n1 | cut -d: -f1)" ] \
+  || fail "drift lines lead the report"
+
+out=$(up --apply --max-writes 2 2>&1); rc=$?
+expect_code 0 "$rc" "bounded apply succeeds"
+assert_contains "$out" "applied 2 write(s); 3 deferred to the next pass" "apply stops at the write bound"
+out=$(up --apply 2>&1); rc=$?
+expect_code 0 "$rc" "second apply succeeds"
+assert_contains "$out" "applied 3 write(s); 0 deferred" "the next pass finishes the rest"
+assert_grep '"Needs you": {"checkbox": true}' "$TMP/requests.log" "a captain-held item is flagged Needs you"
+assert_grep 'Blue or green? \"Blue\" is the default' "$TMP/requests.log" "the hold reason becomes the Question"
+assert_grep '"Lane": {"select": {"name": "Claude"}}' "$TMP/requests.log" "created rows are in firstmate's lane"
+assert_no_grep '"Status":' "$TMP/requests.log" "the captain's Status column is never written"
+assert_no_grep '"Priority":' "$TMP/requests.log" "the captain's Priority column is never written"
+out=$(up 2>&1); rc=$?
+expect_code 0 "$rc" "a converged board reports cleanly"
+assert_contains "$out" "report only: 0 write(s) pending" "a converged board has nothing to write"
+assert_contains "$out" "orphan gone" "an orphan is still reported, never deleted"
+
+# 14. An unreachable API is a network failure (1), not a usage error.
 stop_fake
 out=$(printf '%s' "$filter" | notion query actions 2>&1); rc=$?
 expect_code 1 "$rc" "unreachable Notion is a network failure"
