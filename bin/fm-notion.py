@@ -239,8 +239,8 @@ def select_spec(options):
     return {"select": {"options": [{"name": name} for name in options]}}
 
 
-def action_items_schema(repos):
-    return {
+def action_items_schema(repos, database=None):
+    schema = {
         # firstmate-owned
         "Task ID": {"rich_text": {}},
         "Kind": select_spec(KINDS),
@@ -257,6 +257,21 @@ def action_items_schema(repos):
         "Answer": {"rich_text": {}},
         "Surface": select_spec(SURFACES),
         "Design handover": {"url": {}},
+    }
+    if database:
+        # Dependencies, the smallest shape that shows "this unblocks three
+        # others": a self-relation and a count. No score. Either side may
+        # edit the relation; Unblocks is derived and never typed.
+        schema["Blocked by"] = {"relation": {"database_id": database, "type": "dual_property",
+                                             "dual_property": {"synced_property_name": "Blocks"}}}
+    return schema
+
+
+# Derived fields that depend on another property existing first.
+def action_items_derived():
+    return {
+        "Unblocks": {"rollup": {"relation_property_name": "Blocks", "rollup_property_name": "Task ID",
+                                "function": "count"}},
     }
 
 
@@ -278,22 +293,30 @@ def command_ensure_schema(args):
         die("FM_NOTION_REPOS is empty; the wrapper passes the registered projects", 2)
     database = database_id()
     current = request("GET", "/databases/%s" % database).get("properties") or {}
-    wanted = action_items_schema(repos)
     missing = {}
     conflicts = []
-    for name, spec in wanted.items():
-        kind = next(iter(spec))
-        have = current.get(name)
-        if have is None:
-            missing[name] = spec
-        elif have.get("type") != kind:
-            conflicts.append("%s is %s, expected %s" % (name, have.get("type"), kind))
-        else:
-            sys.stdout.write("present: %s\n" % name)
+    for stage in ("base", "derived"):
+        if stage == "derived":
+            if conflicts:
+                break
+            if missing and not dry_run:
+                request("PATCH", "/databases/%s" % database, {"properties": missing})
+                current = request("GET", "/databases/%s" % database).get("properties") or {}
+            missing = {}
+        wanted = action_items_schema(repos, database) if stage == "base" else action_items_derived()
+        for name, spec in wanted.items():
+            kind = next(iter(spec))
+            have = current.get(name)
+            if have is None:
+                missing[name] = spec
+            elif have.get("type") != kind:
+                conflicts.append("%s is %s, expected %s" % (name, have.get("type"), kind))
+            else:
+                sys.stdout.write("present: %s\n" % name)
+        for name in missing:
+            sys.stdout.write("%s: %s\n" % ("would add" if dry_run else "add", name))
     for line in conflicts:
         sys.stdout.write("conflict: %s\n" % line)
-    for name in missing:
-        sys.stdout.write("%s: %s\n" % ("would add" if dry_run else "add", name))
     if conflicts:
         die("%d property type conflict(s); nothing written" % len(conflicts))
     if missing and not dry_run:
