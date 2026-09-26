@@ -259,6 +259,8 @@ assert_contains "$out" "stale ghost no live record" "an in-flight item with no r
 assert_contains "$out" "update building Dev status: Queued -> Building" "an in-flight task moves to Building"
 assert_contains "$out" "update building PR: - -> https://github.com/o/r/pull/7" "the PR link comes from the task record"
 assert_contains "$out" "update building Worker: - -> claude" "the worker comes from the task record"
+assert_contains "$out" "update building Last activity: - -> 2026-09-26" "last activity is the day of the newest status event"
+assert_not_contains "$out" "update oldcheck Last activity" "a task with no record gets no invented activity date"
 assert_contains "$out" "refresh oldcheck" "an old Last checked is refreshed even with no change"
 assert_contains "$out" 'create fresh Queued A brand new, "quoted" item' "a new backlog item is created with its title"
 assert_contains "$out" "create askme Queued Pick a colour" "a captain-held item is created"
@@ -284,7 +286,40 @@ expect_code 0 "$rc" "a converged board reports cleanly"
 assert_contains "$out" "report only: 0 write(s) pending" "a converged board has nothing to write"
 assert_contains "$out" "orphan gone" "an orphan is still reported, never deleted"
 
-# 14. An unreachable API is a network failure (1), not a usage error.
+# 14. ensure-projects adds the initiative fields, additions only, and rolls
+# Last worked up from the related Action Items' Last activity.
+stop_fake
+python3 - "$TMP/world.json" <<'PY'
+import json, sys
+world = {"databases": {
+    "db-actions": {"properties": {"Last activity": {"type": "date", "date": {}}}, "pages": []},
+    "db-projects": {"properties": {
+        "Project": {"type": "title", "title": {}},
+        "Rating": {"type": "select", "select": {"options": [{"name": "⭐"}]}},
+        "Review Date": {"type": "date", "date": {}},
+        "Action Items": {"type": "relation", "relation": {"database_id": "db-actions"}},
+    }, "pages": []},
+}}
+json.dump(world, open(sys.argv[1], "w"))
+PY
+start_fake
+BASE="http://127.0.0.1:$(cat "$TMP/port")/v1"
+out=$(notion ensure-projects --dry-run 2>&1); rc=$?
+expect_code 0 "$rc" "projects dry run succeeds"
+assert_contains "$out" "would add: Automation level" "dry run names Automation level"
+assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "projects dry run writes nothing"
+out=$(notion ensure-projects 2>&1); rc=$?
+expect_code 0 "$rc" "projects apply succeeds"
+assert_grep '"Automation level": {"select": {"options": [{"name": "Fully automated"}, {"name": "Needs a human"}, {"name": "Manual"}]}}' "$TMP/requests.log" "Automation level is a fixed three-way list"
+assert_grep '"Numbers": {"url": {}}' "$TMP/requests.log" "Numbers is a link, not copied metrics"
+assert_grep '"Last worked": {"rollup": {"function": "latest_date", "relation_property_name": "Action Items", "rollup_property_name": "Last activity"}}' "$TMP/requests.log" "Last worked is derived through the existing relation"
+assert_no_grep '"Rating":' "$TMP/requests.log" "the existing Rating is never rewritten"
+assert_no_grep '"Review Date":' "$TMP/requests.log" "the existing Review Date is never rewritten"
+out=$(notion ensure-projects 2>&1); rc=$?
+expect_code 0 "$rc" "second projects run succeeds"
+assert_not_contains "$out" "add:" "second projects run adds nothing"
+
+# 15. An unreachable API is a network failure (1), not a usage error.
 stop_fake
 out=$(printf '%s' "$filter" | notion query actions 2>&1); rc=$?
 expect_code 1 "$rc" "unreachable Notion is a network failure"
