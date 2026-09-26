@@ -569,6 +569,11 @@ def command_up(args):
                                                 with no record or a status log quiet for
                                                 FM_NOTION_STALE_DAYS (default 2) and not
                                                 ending in done or paused
+      spec <task-id> brief lacks its design handover
+                                                building or in review, the row carries a
+                                                Design handover, and the task's brief
+                                                (FM_NOTION_DATA_DIR/<id>/brief.md) never
+                                                cites it: the spec skipped the design
     Report-only by default. --apply writes creates, updates and refreshes, at
     most --max-writes pages per pass (default 20) so one pass fits inside the
     watcher's check bound; the next pass continues. Orphan and stale lines are
@@ -591,6 +596,7 @@ def command_up(args):
     if max_writes < 1 or max_writes > 200:
         die("--max-writes must be from 1 to 200", 2)
     state_dir = os.environ.get("FM_NOTION_STATE_DIR", "")
+    data_dir = os.environ.get("FM_NOTION_DATA_DIR", "")
     listing = os.environ.get("FM_NOTION_BACKLOG_LISTING", "")
     if not state_dir or not listing:
         die("FM_NOTION_STATE_DIR and FM_NOTION_BACKLOG_LISTING are required", 2)
@@ -667,6 +673,15 @@ def command_up(args):
     for tid, have in sorted(board.items()):
         if tid not in local:
             plan.append((0, "orphan %s %s" % (tid, have["id"]), None))
+        handover = (have["props"].get("Design handover") or "").strip()
+        if handover and data_dir and tid in local and local[tid]["Dev status"] in ("Building", "In review"):
+            try:
+                with open(os.path.join(data_dir, tid, "brief.md"), encoding="utf-8") as handle:
+                    brief = handle.read()
+            except OSError:
+                brief = None
+            if brief is not None and handover not in brief:
+                plan.append((1, "spec %s brief lacks its design handover" % tid, None))
 
     plan.sort(key=lambda item: item[0])
     writes = 0

@@ -15,7 +15,7 @@
 #         Report-only by default; with the private opt-in file
 #         config/notion-sync containing the word `apply`, the pass also
 #         writes (bounded per pass, so a big first sync spreads over passes).
-#         Drift (orphan and stale lines) is reported either way, never
+#         Drift (orphan, stale and spec lines) is reported either way, never
 #         resolved.
 # Each surfaced item is keyed (ready page, answer page plus answer text,
 # drift line) in the private record state/.notion-check, so the same item
@@ -90,7 +90,7 @@ keys_from() {
   awk '
     $1 == "ready" { print "ready " $2; next }
     $1 == "answer" { print "answer " $3 " " substr($0, index($0, $4)); next }
-    $1 == "orphan" || $1 == "stale" { print $0; next }
+    $1 == "orphan" || $1 == "stale" || $1 == "spec" { print $0; next }
   '
 }
 
@@ -165,7 +165,7 @@ action_check() {
   comm -23 "$work/keys" "$work/seen" > "$work/new"
   ready=$(grep -c '^ready ' "$work/new")
   answers=$(grep -c '^answer ' "$work/new")
-  drift=$(grep -cE '^(orphan|stale) ' "$work/new")
+  drift=$(grep -cE '^(orphan|stale|spec) ' "$work/new")
 
   if [ -n "$failure" ]; then
     prev_failure=$(record_failure)
