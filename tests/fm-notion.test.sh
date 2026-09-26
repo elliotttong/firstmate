@@ -157,7 +157,45 @@ expect_code 1 "$rc" "a type conflict fails the schema run"
 assert_contains "$out" "conflict: Ready is rich_text, expected checkbox" "conflict is named"
 assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "a conflicting schema run writes nothing"
 
-# 12. An unreachable API is a network failure (1), not a usage error.
+# 12. down reads only firstmate's lane for new work, and answered decisions.
+stop_fake
+python3 - "$TMP/world.json" <<'PY'
+import json, sys
+def row(pid, title, lane=None, ready=False, task="", needs=False, answer=""):
+    text = lambda s: [{"plain_text": s}] if s else []
+    return {"id": pid, "url": "https://notion.so/" + pid, "properties": {
+        "Action Item": {"type": "title", "title": text(title)},
+        "Lane": {"type": "select", "select": {"name": lane} if lane else None},
+        "Ready": {"type": "checkbox", "checkbox": ready},
+        "Task ID": {"type": "rich_text", "rich_text": text(task)},
+        "Needs you": {"type": "checkbox", "checkbox": needs},
+        "Answer": {"type": "rich_text", "rich_text": text(answer)},
+    }}
+world = {"databases": {"db-actions": {"properties": {}, "pages": [
+    row("new1", "Build the export", "Claude", ready=True),
+    row("mine-not-ready", "Someday idea", "Claude"),
+    row("taken", "Already dispatched", "Claude", ready=True, task="exportfix"),
+    row("personal", "Book dentist", "Personal", ready=True),
+    row("both", "Shared chore", "Both", ready=True),
+    row("nolane", "Unlabelled", None, ready=True),
+    row("asked", "Pick a colour", "Claude", task="colourpick", needs=True, answer="blue, the darker one"),
+    row("unanswered", "Waiting on him", "Claude", task="waiting", needs=True),
+]}}}
+json.dump(world, open(sys.argv[1], "w"))
+PY
+start_fake
+BASE="http://127.0.0.1:$(cat "$TMP/port")/v1"
+out=$(notion down 2>&1); rc=$?
+expect_code 0 "$rc" "down succeeds"
+assert_contains "$out" "ready new1 Build the export" "a ready row in firstmate's lane is new work"
+assert_contains "$out" "answer colourpick asked blue, the darker one" "an answered decision is surfaced with its task id"
+assert_equals "2" "$(printf '%s\n' "$out" | grep -c .)" "nothing else is surfaced"
+for other in Someday dispatched dentist Shared Unlabelled Waiting; do
+  assert_not_contains "$out" "$other" "down ignores the row titled '$other'"
+done
+assert_no_grep '"method": "PATCH"' "$TMP/requests.log" "down is read-only"
+
+# 13. An unreachable API is a network failure (1), not a usage error.
 stop_fake
 out=$(printf '%s' "$filter" | notion query actions 2>&1); rc=$?
 expect_code 1 "$rc" "unreachable Notion is a network failure"
