@@ -134,6 +134,8 @@ expect_code 0 "$rc" "schema apply succeeds"
 assert_contains "$out" "add: Needs you" "apply adds the Needs you flag"
 assert_grep '"Dev status": {"select": {"options": [{"name": "Queued"}' "$TMP/requests.log" "Dev status is a fixed option list"
 assert_grep '{"name": "alpha"}' "$TMP/requests.log" "Repo options come from the cloned projects"
+assert_grep '"Blocked by": {"relation": {"database_id": "db-actions", "dual_property": {"synced_property_name": "Blocks"}' "$TMP/requests.log" "dependencies are a two-way self-relation"
+assert_grep '"Unblocks": {"rollup": {"function": "count", "relation_property_name": "Blocks"' "$TMP/requests.log" "Unblocks is a derived count, added after its relation"
 patches=$(grep -c '"method": "PATCH"' "$TMP/requests.log")
 out=$(notion ensure-schema 2>&1); rc=$?
 expect_code 0 "$rc" "second schema run succeeds"
