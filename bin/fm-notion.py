@@ -246,6 +246,7 @@ def action_items_schema(repos, database=None):
         "Kind": select_spec(KINDS),
         "Dev status": select_spec(DEV_STATUS),
         "Last checked": {"date": {}},
+        "Last activity": {"date": {}},
         "Needs you": {"checkbox": {}},
         "Question": {"rich_text": {}},
         "Repo": select_spec(repos),
@@ -488,6 +489,18 @@ def last_event_age_days(state_dir, tid, now_epoch):
     return None
 
 
+def last_activity_day(state_dir, tid):
+    """UTC day of the task's newest status event, or "" with no record."""
+    import datetime
+    for name in (tid + ".status", tid + ".meta"):
+        try:
+            mtime = os.stat(os.path.join(state_dir, name)).st_mtime
+        except OSError:
+            continue
+        return datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc).strftime("%Y-%m-%d")
+    return ""
+
+
 def local_view(state_dir, listing_path, now_epoch, stale_days):
     view = {}
     for task in parse_backlog_listing(listing_path):
@@ -514,6 +527,7 @@ def local_view(state_dir, listing_path, now_epoch, stale_days):
             "Question": one_line(task.get("hold_reason"), 1900) if held else "",
             "PR": meta.get("pr") or None,
             "Worker": meta.get("harness", ""),
+            "Last activity": last_activity_day(state_dir, tid),
             "_stale": stale,
         }
     return view
@@ -522,7 +536,7 @@ def local_view(state_dir, listing_path, now_epoch, stale_days):
 # Stages the reconciler cannot derive from local records. A queued row the
 # board already carries in one of these keeps it: firstmate sets them by hand.
 PRE_BUILD = ("Needs design", "Specced")
-SYNCED = ("Dev status", "Kind", "Repo", "Needs you", "Question", "PR", "Worker")
+SYNCED = ("Dev status", "Kind", "Repo", "Needs you", "Question", "PR", "Worker", "Last activity")
 
 
 def rich(text):
@@ -536,8 +550,8 @@ def to_property(name, value):
         return {"checkbox": bool(value)}
     if name == "PR":
         return {"url": value or None}
-    if name == "Last checked":
-        return {"date": {"start": value}}
+    if name in ("Last checked", "Last activity"):
+        return {"date": {"start": value} if value else None}
     return rich(value or "")
 
 
@@ -628,6 +642,8 @@ def command_up(args):
                 continue
             if name == "Needs you":
                 board_value = bool(board_value)
+            if name == "Last activity" and board_value:
+                board_value = board_value[:10]
             if (board_value or None) != (local_value or None):
                 changes[name] = to_property(name, local_value)
                 lines.append("update %s %s: %s -> %s" % (tid, name, one_line(board_value, 40) or "-",
@@ -672,8 +688,91 @@ def command_up(args):
     return 0
 
 
+# Initiative fields added to the captain's existing Projects database. It
+# already carries Rating (five stars), Review Date, Next Action and Status,
+# and those are used as they are. Additions only: nothing there is retyped,
+# renamed or removed. Last worked is derived from the most recent related
+# Action Item and is never typed; Numbers is a pointer to where the stats
+# live, never copied metrics.
+AUTOMATION_LEVELS = ["Fully automated", "Needs a human", "Manual"]
+
+
+def projects_schema():
+    return {
+        "Automation level": select_spec(AUTOMATION_LEVELS),
+        "Numbers": {"url": {}},
+    }
+
+
+def projects_derived(relation):
+    return {
+        "Last worked": {"rollup": {"relation_property_name": relation,
+                                   "rollup_property_name": "Last activity",
+                                   "function": "latest_date"}},
+    }
+
+
+def ensure(database, stages, dry_run):
+    """Add missing properties stage by stage; never touch existing ones."""
+    current = request("GET", "/databases/%s" % database).get("properties") or {}
+    for index, wanted in enumerate(stages):
+        if index and not dry_run:
+            current = request("GET", "/databases/%s" % database).get("properties") or {}
+        missing = {}
+        conflicts = []
+        for name, spec in wanted.items():
+            kind = next(iter(spec))
+            have = current.get(name)
+            if have is None:
+                missing[name] = spec
+            elif have.get("type") != kind:
+                conflicts.append("%s is %s, expected %s" % (name, have.get("type"), kind))
+            else:
+                sys.stdout.write("present: %s\n" % name)
+        for line in conflicts:
+            sys.stdout.write("conflict: %s\n" % line)
+        if conflicts:
+            die("%d property type conflict(s); nothing more written" % len(conflicts))
+        for name in missing:
+            sys.stdout.write("%s: %s\n" % ("would add" if dry_run else "add", name))
+        if missing and not dry_run:
+            request("PATCH", "/databases/%s" % database, {"properties": missing})
+
+
+def command_ensure_projects(args):
+    """ensure-projects [--dry-run]: add the initiative fields to Projects.
+
+    Needs FM_NOTION_DB (Projects) and FM_NOTION_ACTIONS_DB (Action Items).
+    Last worked rolls up Action Items' Last activity (which ensure-schema adds
+    and `up` stamps only on a real change, never on a Last checked refresh)
+    through the existing Action Items relation.
+    """
+    dry_run = False
+    for flag in args:
+        if flag == "--dry-run":
+            dry_run = True
+        else:
+            die("unknown ensure-projects argument: %s" % flag, 2)
+    projects = database_id()
+    actions = os.environ.get("FM_NOTION_ACTIONS_DB", "")
+    if not actions:
+        die("FM_NOTION_ACTIONS_DB is required", 2)
+    props = request("GET", "/databases/%s" % projects).get("properties") or {}
+    relation = next((name for name, p in props.items() if p.get("type") == "relation"
+                     and (p.get("relation") or {}).get("database_id", "").replace("-", "")
+                     == actions.replace("-", "")), None)
+    if relation is None:
+        die("Projects has no relation to Action Items; nothing written")
+    have = request("GET", "/databases/%s" % actions).get("properties") or {}
+    if (have.get("Last activity") or {}).get("type") != "date":
+        die("Action Items has no Last activity date; run ensure-schema first")
+    ensure(projects, [projects_schema(), projects_derived(relation)], dry_run)
+    return 0
+
+
 COMMANDS = {
     "down": command_down,
+    "ensure-projects": command_ensure_projects,
     "ensure-schema": command_ensure_schema,
     "query": command_query,
     "up": command_up,

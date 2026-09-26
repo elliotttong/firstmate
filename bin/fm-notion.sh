@@ -5,6 +5,7 @@
 #   fm-notion.sh whoami
 #   fm-notion.sh query <actions|projects> [--limit N]   (filter JSON on stdin)
 #   fm-notion.sh ensure-schema [--dry-run]
+#   fm-notion.sh ensure-projects [--dry-run]
 #   fm-notion.sh down
 #   fm-notion.sh up [--apply] [--max-writes N]
 #   fm-notion.sh --help
@@ -29,6 +30,10 @@
 # retypes, renames, or deletes one that exists; bin/fm-notion.py owns the
 # field list. Repo options are the projects cloned under $FM_HOME/projects
 # plus firstmate.
+#
+# `ensure-projects` adds the initiative fields to the Projects database
+# (Automation level, Numbers link, and Last worked derived from the most
+# recent related Action Item), additions only.
 #
 # This wrapper owns configuration; bin/fm-notion.py owns the wire format.
 # Credentials and database ids come from the environment, filling missing keys
@@ -119,6 +124,13 @@ case "$cmd" in
     FM_NOTION_DB=$db FM_NOTION_STATE_DIR=$state_dir FM_NOTION_BACKLOG_LISTING=$listing \
       python3 "$ENGINE" up "$@"
     exit $?
+    ;;
+  ensure-projects)
+    db=$(resolve_db projects)
+    [ -n "$db" ] || die_usage "no database id configured for 'projects'"
+    actions=$(resolve_db actions)
+    [ -n "$actions" ] || die_usage "no database id configured for 'actions'"
+    FM_NOTION_DB=$db FM_NOTION_ACTIONS_DB=$actions exec python3 "$ENGINE" ensure-projects "$@"
     ;;
   ensure-schema)
     db=$(resolve_db actions)
