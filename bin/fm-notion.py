@@ -356,10 +356,304 @@ def command_down(args):
     return 0
 
 
+def read_meta(path):
+    meta = {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                key, sep, value = line.rstrip("\n").partition("=")
+                if sep:
+                    meta[key] = value
+    except OSError:
+        pass
+    return meta
+
+
+def last_status_word(path):
+    """The state word of a task's newest status event, or "" when none."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 4096))
+            lines = [ln for ln in handle.read().decode("utf-8", "replace").splitlines() if ln.strip()]
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    return lines[-1].split(" ", 1)[0].split(":", 1)[0].strip()
+
+
+TOON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\"}
+TRUNCATION_SENTINEL = "\n... (truncated"
+
+
+def toon_fields(line):
+    """Split one TOON tabular row: comma-separated, quoted with backslash escapes."""
+    fields = []
+    current = []
+    quoted = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quoted:
+            if ch == "\\" and i + 1 < len(line):
+                current.append(TOON_ESCAPES.get(line[i + 1], line[i + 1]))
+                i += 2
+                continue
+            if ch == '"':
+                quoted = False
+            else:
+                current.append(ch)
+        elif ch == '"':
+            quoted = True
+        elif ch == ",":
+            fields.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    fields.append("".join(current))
+    return fields
+
+
+def parse_backlog_listing(path):
+    """Parse the TOON rows of `tasks-axi list --fields hold_kind,hold_reason`."""
+    rows = []
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    header = None
+    for line in text.splitlines():
+        if line.startswith("tasks["):
+            header = line[line.index("{") + 1:line.index("}")].split(",")
+            continue
+        if header is None or not line.startswith("  "):
+            continue
+        fields = toon_fields(line.strip())
+        if len(fields) != len(header):
+            continue
+        row = dict(zip(header, fields))
+        for key, value in row.items():
+            cut = value.find(TRUNCATION_SENTINEL)
+            if cut >= 0:
+                row[key] = value[:cut].rstrip() + "..."
+        rows.append(row)
+    return rows
+
+
+def dev_status_for(task, meta, status_word):
+    """Derive a board Dev status from firstmate's own records alone."""
+    state = task.get("state")
+    if state == "done":
+        return "Done"
+    if state == "queued":
+        return "Queued"
+    if status_word == "failed":
+        return "Failed"
+    if status_word == "done":
+        return "In review"
+    return "Building"
+
+
+def last_event_age_days(state_dir, tid, now_epoch):
+    """Days since the task's status log (or, lacking one, its meta) last changed."""
+    for name in (tid + ".status", tid + ".meta"):
+        try:
+            return (now_epoch - os.stat(os.path.join(state_dir, name)).st_mtime) / 86400.0
+        except OSError:
+            continue
+    return None
+
+
+def local_view(state_dir, listing_path, now_epoch, stale_days):
+    view = {}
+    for task in parse_backlog_listing(listing_path):
+        tid = task.get("id")
+        if not tid:
+            continue
+        meta = read_meta(os.path.join(state_dir, tid + ".meta"))
+        word = last_status_word(os.path.join(state_dir, tid + ".status"))
+        held = task.get("hold_kind") == "captain"
+        repo = task.get("repo") if task.get("repo") not in ("", "-") else ""
+        stale = ""
+        if task.get("state") == "in_flight" and not held:
+            age = last_event_age_days(state_dir, tid, now_epoch)
+            if not meta:
+                stale = "no live record"
+            elif age is not None and age >= stale_days and word not in ("done", "paused"):
+                stale = "quiet for %d days" % int(age)
+        view[tid] = {
+            "title": task.get("title") or tid,
+            "Dev status": dev_status_for(task, meta, word),
+            "Kind": task.get("kind") if task.get("kind") not in ("", "-") else "",
+            "Repo": repo,
+            "Needs you": held,
+            "Question": one_line(task.get("hold_reason"), 1900) if held else "",
+            "PR": meta.get("pr") or None,
+            "Worker": meta.get("harness", ""),
+            "_stale": stale,
+        }
+    return view
+
+
+# Stages the reconciler cannot derive from local records. A queued row the
+# board already carries in one of these keeps it: firstmate sets them by hand.
+PRE_BUILD = ("Needs design", "Specced")
+SYNCED = ("Dev status", "Kind", "Repo", "Needs you", "Question", "PR", "Worker")
+
+
+def rich(text):
+    return {"rich_text": [{"type": "text", "text": {"content": text}}] if text else []}
+
+
+def to_property(name, value):
+    if name in ("Dev status", "Kind", "Repo"):
+        return {"select": {"name": value} if value else None}
+    if name == "Needs you":
+        return {"checkbox": bool(value)}
+    if name == "PR":
+        return {"url": value or None}
+    if name == "Last checked":
+        return {"date": {"start": value}}
+    return rich(value or "")
+
+
+def command_up(args):
+    """up [--apply] [--max-writes N]: bring the board into line with firstmate.
+
+    Reads firstmate's records (FM_NOTION_STATE_DIR metas and status logs, and
+    the backlog listing at FM_NOTION_BACKLOG_LISTING) and every board row that
+    carries a Task ID. Prints one line per difference:
+      create <task-id> <dev-status> <title>
+      update <task-id> <field>: <board> -> <local>
+      refresh <task-id>                         Last checked is older than the window
+      orphan <task-id> <page-id>                on the board, not in firstmate's records
+      stale <task-id> <why>                     in flight, not held for the captain,
+                                                with no record or a status log quiet for
+                                                FM_NOTION_STALE_DAYS (default 2) and not
+                                                ending in done or paused
+    Report-only by default. --apply writes creates, updates and refreshes, at
+    most --max-writes pages per pass (default 20) so one pass fits inside the
+    watcher's check bound; the next pass continues. Orphan and stale lines are
+    reported, never resolved: picking a winner would hide the drift. Only
+    firstmate-owned fields are ever written.
+    """
+    apply = False
+    max_writes = 20
+    while args:
+        flag = args.pop(0)
+        if flag == "--apply":
+            apply = True
+        elif flag == "--max-writes" and args:
+            try:
+                max_writes = int(args.pop(0))
+            except ValueError:
+                die("--max-writes must be a whole number", 2)
+        else:
+            die("unknown up argument: %s" % flag, 2)
+    if max_writes < 1 or max_writes > 200:
+        die("--max-writes must be from 1 to 200", 2)
+    state_dir = os.environ.get("FM_NOTION_STATE_DIR", "")
+    listing = os.environ.get("FM_NOTION_BACKLOG_LISTING", "")
+    if not state_dir or not listing:
+        die("FM_NOTION_STATE_DIR and FM_NOTION_BACKLOG_LISTING are required", 2)
+    refresh_hours = env_int("FM_NOTION_REFRESH_HOURS", 6, 1, 168)
+    stale_days = env_int("FM_NOTION_STALE_DAYS", 2, 1, 60)
+    now = os.environ.get("FM_NOTION_NOW", "")
+    import datetime
+    if now:
+        current = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
+    else:
+        current = datetime.datetime.now(datetime.timezone.utc)
+    stamp = current.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+
+    local = local_view(state_dir, listing, current.timestamp(), stale_days)
+    database = database_id()
+    rows, truncated = query(database, {"filter": {"property": "Task ID", "rich_text": {"is_not_empty": True}}}, 2000)
+    if truncated:
+        die("board read hit the 2000-row ceiling; refusing to reconcile a partial board")
+    board = {}
+    for page in rows:
+        simple = simplify_page(page)
+        tid = (simple["props"].get("Task ID") or "").strip()
+        if tid:
+            board.setdefault(tid, simple)
+
+    plan = []  # (sort key, line, write)
+    for tid, want in sorted(local.items()):
+        if want["_stale"]:
+            plan.append((1, "stale %s %s" % (tid, want["_stale"]), None))
+        have = board.get(tid)
+        if have is None:
+            props = {"Task ID": rich(tid), "Lane": {"select": {"name": FIRSTMATE_LANE}},
+                     "Last checked": to_property("Last checked", stamp)}
+            title_prop = "Action Item"
+            props[title_prop] = {"title": [{"type": "text", "text": {"content": one_line(want["title"], 200)}}]}
+            for name in SYNCED:
+                if want[name] not in ("", None, False):
+                    props[name] = to_property(name, want[name])
+            plan.append((2, "create %s %s %s" % (tid, want["Dev status"], one_line(want["title"], 80)),
+                         ("POST", "/pages", {"parent": {"database_id": database}, "properties": props})))
+            continue
+        hp = have["props"]
+        changes = {}
+        lines = []
+        for name in SYNCED:
+            board_value = hp.get(name)
+            local_value = want[name]
+            if name == "Dev status" and local_value == "Queued" and board_value in PRE_BUILD:
+                continue
+            if name == "Needs you":
+                board_value = bool(board_value)
+            if (board_value or None) != (local_value or None):
+                changes[name] = to_property(name, local_value)
+                lines.append("update %s %s: %s -> %s" % (tid, name, one_line(board_value, 40) or "-",
+                                                          one_line(local_value, 40) or "-"))
+        checked = hp.get("Last checked")
+        fresh = False
+        if checked:
+            try:
+                seen = datetime.datetime.fromisoformat(checked.replace("Z", "+00:00"))
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=datetime.timezone.utc)
+                fresh = (current - seen).total_seconds() < refresh_hours * 3600
+            except ValueError:
+                fresh = False
+        if not changes and fresh:
+            continue
+        changes["Last checked"] = to_property("Last checked", stamp)
+        if not lines:
+            lines.append("refresh %s" % tid)
+        plan.append((3, "\n".join(lines), ("PATCH", "/pages/%s" % have["id"], {"properties": changes})))
+    for tid, have in sorted(board.items()):
+        if tid not in local:
+            plan.append((0, "orphan %s %s" % (tid, have["id"]), None))
+
+    plan.sort(key=lambda item: item[0])
+    writes = 0
+    deferred = 0
+    for _, line, write in plan:
+        sys.stdout.write(line + "\n")
+        if write is None or not apply:
+            continue
+        if writes >= max_writes:
+            deferred += 1
+            continue
+        request(*write)
+        writes += 1
+    if apply:
+        sys.stdout.write("applied %d write(s); %d deferred to the next pass\n" % (writes, deferred))
+    else:
+        pending = sum(1 for _, _, write in plan if write is not None)
+        sys.stdout.write("report only: %d write(s) pending; rerun with --apply\n" % pending)
+    return 0
+
+
 COMMANDS = {
     "down": command_down,
     "ensure-schema": command_ensure_schema,
     "query": command_query,
+    "up": command_up,
     "whoami": command_whoami,
 }
 

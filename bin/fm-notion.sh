@@ -6,7 +6,16 @@
 #   fm-notion.sh query <actions|projects> [--limit N]   (filter JSON on stdin)
 #   fm-notion.sh ensure-schema [--dry-run]
 #   fm-notion.sh down
+#   fm-notion.sh up [--apply] [--max-writes N]
 #   fm-notion.sh --help
+#
+# `up` brings the board into line with firstmate's own records: this home's
+# backlog (read through fm-tasks-axi.sh) and state/<id>.meta and status logs.
+# It is report-only unless --apply is given, writes only firstmate-owned
+# fields, and reports orphans and stale in-flight records without resolving
+# them. bin/fm-notion.py's command_up owns the line format and mapping.
+# FM_NOTION_BACKLOG_LISTING names a saved `tasks-axi list --fields
+# hold_kind,hold_reason` output to use instead of reading the backlog live.
 #
 # `down` prints what the captain has put on the board for firstmate, one line
 # each: `ready <page-id> <title>` for a row in firstmate's lane (Lane=Claude)
@@ -91,6 +100,25 @@ case "$cmd" in
     db=$(resolve_db actions)
     [ -n "$db" ] || die_usage "no database id configured for 'actions'"
     FM_NOTION_DB=$db exec python3 "$ENGINE" down "$@"
+    ;;
+  up)
+    db=$(resolve_db actions)
+    [ -n "$db" ] || die_usage "no database id configured for 'actions'"
+    state_dir="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+    [ -d "$state_dir" ] || die_usage "state directory $state_dir does not exist"
+    listing=${FM_NOTION_BACKLOG_LISTING:-}
+    if [ -z "$listing" ]; then
+      listing=$(mktemp "${TMPDIR:-/tmp}/fm-notion-backlog.XXXXXX") || exit 1
+      trap 'rm -f -- "$listing"' EXIT
+      if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-tasks-axi.sh" list --limit 5000 \
+        --fields hold_kind,hold_reason > "$listing" 2>&1; then
+        printf 'fm-notion: could not read the backlog: %s\n' "$(head -n 1 "$listing")" >&2
+        exit 1
+      fi
+    fi
+    FM_NOTION_DB=$db FM_NOTION_STATE_DIR=$state_dir FM_NOTION_BACKLOG_LISTING=$listing \
+      python3 "$ENGINE" up "$@"
+    exit $?
     ;;
   ensure-schema)
     db=$(resolve_db actions)
