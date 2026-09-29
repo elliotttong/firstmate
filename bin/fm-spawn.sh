@@ -637,6 +637,7 @@ EFFORT=
 BACKEND_ARG=
 MODE=
 YOLO=
+NOTION_PAGE=
 BRANCH_PREFIX=fm/
 TRACEPARENT_ARG=
 HARNESS_SET=0
@@ -690,6 +691,9 @@ for a in "$@"; do
     traceparent)
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
+      ;;
+    notion-page)
+      NOTION_PAGE=$a
       ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
@@ -748,6 +752,10 @@ for a in "$@"; do
   --traceparent=*)
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
+    ;;
+  --notion-page) want_value=notion-page ;;
+  --notion-page=*)
+    NOTION_PAGE=${a#--notion-page=}
     ;;
   *) POS+=("$a") ;;
   esac
@@ -5359,3 +5367,4 @@ SPAWN_ACCOUNT=
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"
+[ -z "$NOTION_PAGE" ] || "$SCRIPT_DIR/fm-notion.sh" adopt "$NOTION_PAGE" "$ID" 2>/dev/null || true
