@@ -1,0 +1,6 @@
+[base] boards whose source lock is held by another process: 25
+[base] reconcile STILL BLOCKED after 15s behind busy source locks
+[base] after release: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+[target] boards whose source lock is held by another process: 25
+[target] reconcile finished in 0.77s while locks held: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+[target] after release: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0

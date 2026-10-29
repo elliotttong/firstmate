@@ -1,0 +1,5 @@
+[base] boards=25 delivered-to-worker-inbox=25
+[base] reconcile pass 1: 19.76s  adapter terminal/silent verdicts=50  out: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+[base] reconcile pass 2: 24.22s  adapter terminal/silent verdicts=50  out: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+[base] total worker inbox records after reconciles=25 (expected 25, no re-delivery)
+WORKDIR=/private/var/folders/1d/8gzx6pzj0m98f6ydpkd5b63m0000gn/T/fm-scale.00sGqh

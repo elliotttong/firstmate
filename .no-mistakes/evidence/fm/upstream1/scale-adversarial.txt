@@ -1,0 +1,16 @@
+== delivered markers present: 25
+== S-ack: worker acknowledges board lavish-042da03bcf971f1b round 1
+handled: lavish-042da03bcf971f1b 1
+reconcile: reconciled: published=24 started=1 stopped=0 uncertain=0 failed=0
+wake-queue rows for lavish-042da03bcf971f1b: 0
+== S-lost-marker: delete delivered record of lavish-0fbb452b25f728c4, reconcile must redo delivery idempotently
+owner inbox record: /private/var/folders/1d/8gzx6pzj0m98f6ydpkd5b63m0000gn/T/fm-scale.ciTu0e/home/state/t18.inbox/001.msg
+reconcile: reconciled: published=24 started=0 stopped=0 uncertain=0 failed=0
+marker recreated: yes; records in that inbox: 1
+== S-filed: worker files lavish-2166c27dd2f53380 note into handled/, marker removed; reconcile must not move it back
+reconcile: reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+(eval):21: no matches found: /private/var/folders/1d/8gzx6pzj0m98f6ydpkd5b63m0000gn/T/fm-scale.ciTu0e/home/state/t17.inbox/*.msg
+active inbox msgs: 0  handled msgs: 1
+== S-symlink: forged symlinked delivered marker is not trusted
+reconciled: published=25 started=0 stopped=0 uncertain=0 failed=0
+adapter verdicts asked (expect >0, only for lavish-22bff90513bdb96b via locked path): 2
